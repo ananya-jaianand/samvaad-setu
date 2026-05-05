@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: 'Inter', 'Noto Sans Kannada', sans-serif;
+  background: #0f1117;
+  color: #e2e8f0;
+}
+
+.kannada-text {
+  font-family: 'Noto Sans Kannada', sans-serif;
+}
+
+.gauge-ring {
+  transition: stroke-dashoffset 0.6s ease;
+}
