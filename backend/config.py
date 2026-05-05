@@ -4,6 +4,7 @@ from typing import Literal
 class Settings(BaseSettings):
     # API Keys
     anthropic_api_key: str = ""
+    gemini_api_key: str = ""         # Google Gemini API key
     sarvam_api_key: str = ""         # get from api.sarvam.ai
     ai4bharat_api_key: str = ""      # get from ai4bharat.org
 
@@ -12,7 +13,7 @@ class Settings(BaseSettings):
 
     # App
     environment: Literal["mock", "production"] = "mock"
-    cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
+    cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000", "http://localhost:8081"]
     max_session_minutes: int = 30
 
     # Escalation thresholds
