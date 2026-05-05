@@ -22,7 +22,7 @@ AI4BHARAT_ASR_URL = "https://ai4bharat.iitm.ac.in/asr/v1/recognize"
 async def transcribe(audio_bytes: bytes, hint_language: str = "kn", district: str = "default") -> ASRResult:
     """
     Main entry point. Runs Saarika; if confidence < threshold, also runs
-    IndicConformer and returns ensemble result.
+    IndicConformer and returns ensemble result (if AI4Bharat key available).
     """
     if settings.environment == "mock" or not settings.sarvam_api_key:
         return _mock_asr(hint_language)
@@ -32,34 +32,55 @@ async def transcribe(audio_bytes: bytes, hint_language: str = "kn", district: st
     if primary.confidence >= settings.asr_confidence_threshold:
         return primary
 
-    # Low confidence → run fallback in parallel and ensemble
-    fallback = await _indiconformer_asr(audio_bytes, hint_language)
-    return _ensemble(primary, fallback)
+    # Low confidence → run fallback if AI4Bharat key is available
+    if settings.ai4bharat_api_key:
+        fallback = await _indiconformer_asr(audio_bytes, hint_language)
+        return _ensemble(primary, fallback)
+    
+    # No fallback available, return primary result
+    return primary
 
 
 async def _saarika_asr(audio_bytes: bytes, language: str) -> ASRResult:
     """
-    POST multipart/form-data to Sarvam Saarika v2.
+    POST multipart/form-data to Sarvam Saarika v2.5
     Docs: https://docs.sarvam.ai/api-reference-docs/endpoints/speech-to-text
     """
-    # ── REPLACE WITH REAL API ──────────────────────────────────────────────
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        files = {"file": ("audio.wav", audio_bytes, "audio/wav")}
-        data  = {
-            "model":         settings.sarvam_asr_model,
-            "language_code": language,
-            "with_timestamps": "false",
-        }
-        headers = {"api-subscription-key": settings.sarvam_api_key}
-        resp = await client.post(SARVAM_ASR_URL, files=files, data=data, headers=headers)
-        resp.raise_for_status()
-        body = resp.json()
+    try:
+        # Use 'unknown' for automatic language detection
+        # Or convert language code to Sarvam format (e.g., 'kn' -> 'kn-IN')
+        sarvam_lang = 'unknown'  # Let Sarvam auto-detect the language
+        
+        print(f"[SARVAM] Calling API with {len(audio_bytes)} bytes, auto-detecting language")
+        async with httpx.AsyncClient(timeout=30.0) as client:  # Increased timeout
+            files = {"file": ("audio.wav", audio_bytes, "audio/wav")}
+            data  = {
+                "model":         settings.sarvam_asr_model,
+                "language_code": sarvam_lang,
+                "with_timestamps": "false",
+            }
+            headers = {"api-subscription-key": settings.sarvam_api_key}
+            print(f"[SARVAM] Sending request to {SARVAM_ASR_URL}")
+            resp = await client.post(SARVAM_ASR_URL, files=files, data=data, headers=headers)
+            print(f"[SARVAM] Response status: {resp.status_code}")
+            resp.raise_for_status()
+            body = resp.json()
+            print(f"[SARVAM] Response body: {body}")
 
-    transcript = body.get("transcript", "")
-    confidence = float(body.get("confidence", 0.8))   # Saarika returns confidence in response
-    lang_detected = body.get("language_code", language)
-    return ASRResult(transcript=transcript, language=lang_detected, confidence=confidence, source="saarika")
-    # ── END REPLACE ────────────────────────────────────────────────────────
+        transcript = body.get("transcript", "")
+        confidence = float(body.get("confidence", 0.8))
+        lang_detected = body.get("language_code", language)
+        print(f"[SARVAM] Success: {transcript[:50]}...")
+        return ASRResult(transcript=transcript, language=lang_detected, confidence=confidence, source="saarika")
+    except httpx.TimeoutException as e:
+        print(f"[SARVAM] Timeout error: {e}")
+        raise Exception(f"Sarvam API timeout: {e}")
+    except httpx.HTTPStatusError as e:
+        print(f"[SARVAM] HTTP error: {e.response.status_code} - {e.response.text}")
+        raise Exception(f"Sarvam API error: {e.response.status_code}")
+    except Exception as e:
+        print(f"[SARVAM] Unexpected error: {e}")
+        raise
 
 
 async def _indiconformer_asr(audio_bytes: bytes, language: str) -> ASRResult:

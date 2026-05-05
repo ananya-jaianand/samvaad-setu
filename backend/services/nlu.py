@@ -1,13 +1,16 @@
 """
-NLU Service — Claude Sonnet for intent extraction, rephrasing, and summarization.
+NLU Service — Google Gemini for intent extraction, rephrasing, and summarization.
 Prompted with district-aware dialect context and Karnataka grievance taxonomy.
 """
 import json
-import anthropic
+import google.generativeai as genai
 from config import settings, DISTRICT_DIALECT_MAP, INTENT_TAXONOMY, VERIFICATION_PHRASES
 from models.session_model import SessionState, Turn
 
-client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+# Configure Gemini
+genai.configure(api_key=settings.gemini_api_key)
+# Use gemini-2.0-flash-exp for latest preview
+model = genai.GenerativeModel('gemini-3-flash-preview')
 
 
 def _build_system_prompt(district: str, language: str) -> str:
@@ -56,35 +59,42 @@ async def extract_intent_and_rephrase(
     Core NLU call. Returns structured JSON with intent, rephrasing,
     verification prompt, and summary.
     """
-    if not settings.anthropic_api_key or settings.environment == "mock":
+    if not settings.gemini_api_key or settings.environment == "mock":
         return _mock_nlu(transcript, session.detected_language)
 
     dialect = DISTRICT_DIALECT_MAP.get(session.district, DISTRICT_DIALECT_MAP["default"])
     system = _build_system_prompt(session.district, session.detected_language)
 
     # Build conversation history for multi-turn context
-    messages = []
+    conversation_history = ""
     for turn in session.citizen_turns()[-4:]:   # last 4 citizen turns for context
-        messages.append({"role": "user", "content": turn.raw_transcript})
+        conversation_history += f"Previous: {turn.raw_transcript}\n"
 
-    messages.append({"role": "user", "content": transcript})
+    # Combine system prompt with conversation
+    full_prompt = f"{system}\n\nCONVERSATION HISTORY:\n{conversation_history}\n\nCURRENT TRANSCRIPT:\n{transcript}\n\nRespond with JSON only:"
 
-    response = await client.messages.create(
-        model=settings.claude_model,
-        max_tokens=600,
-        system=system,
-        messages=messages,
-    )
-
-    raw = response.content[0].text.strip()
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        # Graceful fallback if model adds prose
-        import re
-        match = re.search(r'\{.*\}', raw, re.DOTALL)
-        if match:
-            return json.loads(match.group())
+        response = await model.generate_content_async(full_prompt)
+        raw = response.text.strip()
+        
+        # Remove markdown code fences if present
+        if raw.startswith('```'):
+            raw = raw.split('```')[1]
+            if raw.startswith('json'):
+                raw = raw[4:]
+        raw = raw.strip()
+        
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            # Graceful fallback if model adds prose
+            import re
+            match = re.search(r'\{.*\}', raw, re.DOTALL)
+            if match:
+                return json.loads(match.group())
+            return _mock_nlu(transcript, session.detected_language)
+    except Exception as e:
+        print(f"Gemini API error: {e}")
         return _mock_nlu(transcript, session.detected_language)
 
 
@@ -92,7 +102,7 @@ async def generate_escalation_summary(session: SessionState) -> str:
     """
     One-line context summary for the human agent. Runs once at escalation.
     """
-    if not settings.anthropic_api_key or settings.environment == "mock":
+    if not settings.gemini_api_key or settings.environment == "mock":
         return f"Citizen called about {session.final_intent or 'unknown issue'}. {session.clarification_count} clarification attempts. Needs human assistance."
 
     prompt = f"""Summarize the following citizen call in ONE sentence (max 25 words) for a human agent who is picking it up mid-call.
@@ -106,19 +116,19 @@ DISTRICT: {session.district}
 
 Respond with ONLY the one-line summary, no preamble."""
 
-    response = await client.messages.create(
-        model=settings.claude_model,
-        max_tokens=80,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return response.content[0].text.strip()
+    try:
+        response = await model.generate_content_async(prompt)
+        return response.text.strip()
+    except Exception as e:
+        print(f"Gemini API error: {e}")
+        return f"Citizen called about {session.final_intent or 'unknown issue'}. Needs human assistance."
 
 
 async def generate_ticket_draft(session: SessionState) -> dict:
     """
     Generate a structured ticket draft for the 1092 intake form.
     """
-    if not settings.anthropic_api_key or settings.environment == "mock":
+    if not settings.gemini_api_key or settings.environment == "mock":
         return {
             "category": session.final_intent or "other_grievance",
             "sub_category": "",
@@ -144,14 +154,20 @@ Respond ONLY in valid JSON:
   "suggested_department": "<which govt dept should handle this>"
 }}"""
 
-    response = await client.messages.create(
-        model=settings.claude_model,
-        max_tokens=300,
-        messages=[{"role": "user", "content": prompt}],
-    )
     try:
-        return json.loads(response.content[0].text.strip())
-    except Exception:
+        response = await model.generate_content_async(prompt)
+        raw = response.text.strip()
+        
+        # Remove markdown code fences if present
+        if raw.startswith('```'):
+            raw = raw.split('```')[1]
+            if raw.startswith('json'):
+                raw = raw[4:]
+        raw = raw.strip()
+        
+        return json.loads(raw)
+    except Exception as e:
+        print(f"Gemini API error: {e}")
         return {"category": session.final_intent, "description": "See transcript", "priority": "normal"}
 
 
