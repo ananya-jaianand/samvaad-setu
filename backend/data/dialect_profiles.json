@@ -1,0 +1,296 @@
+{
+  "bengaluru_urban": {
+    "district": "bengaluru_urban",
+    "dialect_tag": "urban_kannada",
+    "formality_register": "informal",
+    "vocabulary_hints": {
+      "ಆಯ್ತ": "ಆಯಿತು (okay/done)",
+      "ಮಾಡ್ತೀನಿ": "ಮಾಡುತ್ತೇನೆ (I will do)",
+      "ಹೋಗ್ತೀನಿ": "ಹೋಗುತ್ತೇನೆ (I will go)",
+      "ಬರ್ತೀನಿ": "ಬರುತ್ತೇನೆ (I will come)",
+      "ಇದ್ಯಾಕೆ": "ಇದು ಯಾಕೆ (why is this)",
+      "ಏನಾಯ್ತು": "ಏನಾಯಿತು (what happened)",
+      "ಹೌದಾ": "ಹೌದಾ (is that so?)",
+      "ಬೇಡ್ವಾ": "ಬೇಡವಾ (don't you want?)",
+      "ಅಲ್ವಾ": "ಅಲ್ಲವಾ (isn't it?)",
+      "ನೋಡ್ಬೇಕು": "ನೋಡಬೇಕು (need to see)",
+      "ಕೊಡ್ಬೇಕು": "ಕೊಡಬೇಕು (need to give)",
+      "ಮಾಡ್ಬೇಕು": "ಮಾಡಬೇಕು (need to do)",
+      "ತಗೋ": "ತೆಗೆದುಕೋ (take it)",
+      "ಬಿಡು": "ಬಿಡು (leave it)",
+      "ಸ್ವಲ್ಪ": "ಸ್ವಲ್ಪ (a little)",
+      "ತುಂಬಾ": "ತುಂಬಾ (a lot)",
+      "ಒಂಚೂರು": "ಒಂದಿಷ್ಟು (a bit)",
+      "ಫಾಸ್ಟ್": "ಬೇಗ (fast, English code-mix)",
+      "ಪ್ರಾಬ್ಲಂ": "ಸಮಸ್ಯೆ (problem, English code-mix)",
+      "ಕಾಲ್ ಮಾಡಿ": "ಫೋನ್ ಮಾಡಿ (call, English code-mix)"
+    },
+    "common_phrases": [
+      "ಹೇ, ಏನಾಗ್ತಿದೆ?",
+      "ಓಕೆ ಮಾಡ್ತೀನಿ",
+      "ನೋಡ್ತೀನಿ ಆಯ್ತಾ",
+      "ಸರಿ, ಆಯ್ತ"
+    ],
+    "code_mixing_patterns": [
+      "Heavy English mixing: 'complaint file ಮಾಡ್ಬೇಕು', 'online apply ಮಾಡಿದ್ದೇನೆ'",
+      "Hindi mixing: 'please ಮಾಡಿ', 'abhi ಬರ್ತೀನಿ'",
+      "Truncated verb forms: ಮಾಡ್ತೀನಿ instead of ಮಾಡುತ್ತೇನೆ"
+    ]
+  },
+  "bengaluru_rural": {
+    "district": "bengaluru_rural",
+    "dialect_tag": "rural_bangalore",
+    "formality_register": "medium",
+    "vocabulary_hints": {
+      "ಆಗ್ತದೆ": "ಆಗುತ್ತದೆ (it will happen)",
+      "ಮಾಡ್ತಾರೆ": "ಮಾಡುತ್ತಾರೆ (they will do)",
+      "ಇರ್ತಾರೆ": "ಇರುತ್ತಾರೆ (they will be)",
+      "ಹೇಳ್ತಾರೆ": "ಹೇಳುತ್ತಾರೆ (they say)",
+      "ಬರ್ತಾರೆ": "ಬರುತ್ತಾರೆ (they come)",
+      "ಕೊಡ್ತಾರೆ": "ಕೊಡುತ್ತಾರೆ (they give)",
+      "ನೋಡ್ರಿ": "ನೋಡಿ (please look/see)",
+      "ಹೇಳ್ರಿ": "ಹೇಳಿ (please tell)",
+      "ಮಾಡ್ರಿ": "ಮಾಡಿ (please do)",
+      "ಅದೇನೋ": "ಅದು ಏನೋ (that something)",
+      "ಹಂಗೇ": "ಹಾಗೆ (like that)",
+      "ಇಂಗೇ": "ಹೀಗೆ (like this)",
+      "ಯಾಕ್ರಿ": "ಯಾಕೆ (why)",
+      "ಎಷ್ಟ್ರಿ": "ಎಷ್ಟು (how much)",
+      "ಎಲ್ಲಿ ಹೋದ್ರು": "ಎಲ್ಲಿ ಹೋದರು (where did they go)"
+    },
+    "common_phrases": [
+      "ಸ್ವಾಮಿ, ಒಂದು ಕೆಲ್ಸ ಆಗ್ಬೇಕಿತ್ತು",
+      "ನಮ್ಮ ಕಡೆ ಸರ್ಕಾರದೋರು ಬರ್ಲೇ ಇಲ್ಲ",
+      "ಸರ್, ಒಂದ್ ನೋಡ್ರಿ ಪ್ಲೀಸ್"
+    ],
+    "code_mixing_patterns": [
+      "Some English mixing for government terms: 'application', 'certificate'",
+      "Rural honorifics: ಸ್ವಾಮಿ, ಅಣ್ಣ, ಅಕ್ಕ"
+    ]
+  },
+  "mysuru": {
+    "district": "mysuru",
+    "dialect_tag": "mysuru",
+    "formality_register": "formal",
+    "vocabulary_hints": {
+      "ಆಗ್ಲಾ": "ಆಗಲಿ (let it be/okay)",
+      "ಇರ್ಲಿ": "ಇರಲಿ (let it be)",
+      "ಮಾಡ್ಲಿ": "ಮಾಡಲಿ (let them do)",
+      "ಹೇಳ್ಲಿ": "ಹೇಳಲಿ (let them say)",
+      "ಬರ್ಲಿ": "ಬರಲಿ (let them come)",
+      "ಮಾಡ್ಬೇಕಲ್ಲ": "ಮಾಡಬೇಕಲ್ಲ (should do, isn't it)",
+      "ಹೋಗ್ಬೇಕಲ್ಲ": "ಹೋಗಬೇಕಲ್ಲ (should go)",
+      "ಇದ್ದಾರಲ್ಲ": "ಇದ್ದಾರಲ್ಲ (they are there, aren't they)",
+      "ಕೊಡ್ಬಾರ್ದಾ": "ಕೊಡಬಾರದಾ (shouldn't they give?)",
+      "ಅಲ್ಲವೇ": "ಅಲ್ಲವೇ (isn't it so?)",
+      "ಹೌದಲ್ಲ": "ಹೌದಲ್ಲ (yes indeed)",
+      "ನಿಜವಾಗ್ಲೂ": "ನಿಜವಾಗಲೂ (truly)",
+      "ಖಂಡಿತ": "ಖಂಡಿತ (certainly)",
+      "ಶ್ರೀಮಾನ್": "ಶ್ರೀಮಾನ್ (sir, formal address)",
+      "ದಯಮಾಡಿ": "ದಯಮಾಡಿ (kindly, formal)"
+    },
+    "common_phrases": [
+      "ಶ್ರೀಮಾನ್, ನನ್ನ ಒಂದು ಮನವಿ ಇದೆ",
+      "ದಯಮಾಡಿ ಸಹಾಯ ಮಾಡಿ",
+      "ನಿಮ್ಮ ಗಮನಕ್ಕೆ ತರಬೇಕಿತ್ತು"
+    ],
+    "code_mixing_patterns": [
+      "Minimal code-mixing; formal Kannada preferred",
+      "Classical Sanskrit-derived vocabulary more common",
+      "Complete, grammatically full sentences"
+    ]
+  },
+  "mangaluru": {
+    "district": "mangaluru",
+    "dialect_tag": "tulu_coast",
+    "formality_register": "medium",
+    "vocabulary_hints": {
+      "ಆತ್": "ಆಯಿತು (okay/done, Tulu-influenced)",
+      "ಉಂಡು": "ಇದೆ (there is, Tulu)",
+      "ಮಲ್ಪುವ": "ಮಾಡುವ (let's do, Tulu)",
+      "ಮಲ್ತೆ": "ಮಾಡಿ (do it, Tulu influence)",
+      "ಪಂಡ": "ಅಂದ (said, Tulu)",
+      "ಇತ್ತ್": "ಇದ್ದ (was, Tulu)",
+      "ಆಂಡ್": "ಆದ (became, Tulu)",
+      "ಯೆನ್ನ": "ನನ್ನ (my, Tulu)",
+      "ಒಂಜಿ": "ಒಂದು (one, Tulu)",
+      "ಎಡ್ಡೆ": "ಒಳ್ಳೆ (good, Tulu)",
+      "ಕೊರ್ಲೆ": "ಕೊಡಿ (give me, Tulu-influenced)",
+      "ಬರ್ಪ": "ಬರಬೇಕು (should come)",
+      "ಹೇಳ್ದೆ": "ಹೇಳಿದ್ದೇನೆ (I told)",
+      "ನೋಡ್ಯ": "ನೋಡಿ (look/see)",
+      "ಬೇಡ್ದೆ": "ಬೇಡ (don't want)"
+    },
+    "common_phrases": [
+      "ಆತ್, ನಂಗೆ ಒಂದ್ ಸಮಸ್ಯೆ ಇದ್ದ್",
+      "ಯೆನ್ನ ಮನೆ ಹತ್ತಿರ ಏನಾಗ್ತ ಉಂಡು",
+      "ಸರ್, ಒಂಜಿ ನೋಡ್ಯ"
+    ],
+    "code_mixing_patterns": [
+      "Tulu words commonly inserted: ಆತ್, ಉಂಡು",
+      "Konkani influence in Mangaluru city areas",
+      "English technical terms mixed freely: 'pipe line', 'complaint'"
+    ]
+  },
+  "udupi": {
+    "district": "udupi",
+    "dialect_tag": "udupi_coastal",
+    "formality_register": "medium",
+    "vocabulary_hints": {
+      "ಆತ್": "ಆಯಿತು (okay, Tulu-influenced)",
+      "ಉಂಡ್": "ಇದೆ (there is)",
+      "ಕೊಡ್ಪ": "ಕೊಡು (give)",
+      "ಮಲ್ಪ": "ಮಾಡು (do)",
+      "ಬರ್ಪ": "ಬಾ (come)",
+      "ಹೋಪ": "ಹೋಗು (go)",
+      "ಇಜ್ಜಿ": "ಇಲ್ಲ (not there, Tulu)",
+      "ಮಾರ್ನೆ": "ನಾಳೆ (tomorrow)",
+      "ಎಲ್ಲಾ": "ಎಲ್ಲ (all/where)",
+      "ಬೋಡ": "ಬೇಡ (don't want)"
+    },
+    "common_phrases": [
+      "ಆತ್, ಒಂದ್ ಕೆಲ್ಸ ಇದ್ದ್",
+      "ನಮ್ಮ ಮನೆ ಹತ್ತಿರ ಸಮಸ್ಯೆ ಉಂಡ್"
+    ],
+    "code_mixing_patterns": [
+      "Strong Tulu influence similar to Mangaluru",
+      "Konkani community influence in coastal areas",
+      "Temple/religious vocabulary more common"
+    ]
+  },
+  "hubballi_dharwad": {
+    "district": "hubballi_dharwad",
+    "dialect_tag": "north_karnataka",
+    "formality_register": "informal",
+    "vocabulary_hints": {
+      "ಆತ": "ಆಯಿತು (okay)",
+      "ಇಲ್ಲಾ": "ಇಲ್ಲ (no/not there)",
+      "ಮಾಡ್ರಿ": "ಮಾಡಿ (do it, honorific)",
+      "ಹೇಳ್ರಿ": "ಹೇಳಿ (tell, honorific)",
+      "ಬರ್ರಿ": "ಬನ್ನಿ (come, honorific)",
+      "ನೋಡ್ರಿ": "ನೋಡಿ (see, honorific)",
+      "ಕೊಡ್ರಿ": "ಕೊಡಿ (give, honorific)",
+      "ಏನ್ ಮಾಡ್ರಿ": "ಏನು ಮಾಡಿ (what to do?)",
+      "ಖರೆ ಐತ್ಯಾ": "ನಿಜವಾ (is it true?)",
+      "ಇದ್ದ ಬಿಡ್ರಿ": "ಅದಿರಲಿ (leave that)",
+      "ಅದ್ ಬಿಡ್ರಿ": "ಅದನ್ನ ಬಿಡಿ (forget that)",
+      "ಹಾಂಗ ಮಾಡ್ರಿ": "ಹಾಗೆ ಮಾಡಿ (do like that)",
+      "ಕಡೆ ಐತ್ಯಾ": "ಸ್ವಲ್ಪ ಇದೆ (is some there?)",
+      "ಯಾರ್ ಮನಿ": "ಯಾರ ಮನೆ (whose house)",
+      "ದಿನ ದಿನ": "ಪ್ರತಿ ದಿನ (every day)"
+    },
+    "common_phrases": [
+      "ಅಣ್ಣ, ಒಂದ್ ಕೆಲ್ಸ ಆಗ್ಬೇಕ್ರಿ",
+      "ನಮ್ಮ ಓಣ್ಯಾಗ ತುಂಬಾ ಸಮಸ್ಯೆ ಐತ್",
+      "ಸರ್, ನೋಡ್ರಿ ಒಂದ್ ಸಲ"
+    ],
+    "code_mixing_patterns": [
+      "Marathi influence in some areas: ಮಂಗಳ, ಕೆಲ್ಸ",
+      "Urdu honorifics: ಸಾಹೇಬ್, ಜನಾಬ್",
+      "Lingayat community vocabulary patterns"
+    ]
+  },
+  "belagavi": {
+    "district": "belagavi",
+    "dialect_tag": "north_karnataka",
+    "formality_register": "medium",
+    "vocabulary_hints": {
+      "ಆತ": "ಆಯಿತು (okay)",
+      "ಮಾಡ್ರಿ": "ಮಾಡಿ (do it)",
+      "ಹೇಳ್ರಿ": "ಹೇಳಿ (tell)",
+      "ಬರ್ರಿ": "ಬನ್ನಿ (come)",
+      "ನೋಡ್ರಿ": "ನೋಡಿ (see)",
+      "ಖರೆ": "ನಿಜ (true, North Karnataka)",
+      "ಐತ್ಯಾ": "ಇದೆಯಾ (is there?)",
+      "ಇಲ್ಲ ಮಾರಾಯ": "ಇಲ್ಲ (not at all, emphatic)",
+      "ಮಾರಾಯ": "ಮಾರಾಯ (friend, address term)",
+      "ಹೊರ್ತು": "ಹೊರತು (except)",
+      "ಒಳ್ಳ್ಯಾ": "ಒಳ್ಳೆ (good)",
+      "ತಕ್ಕ": "ತಕ್ಷಣ (immediately)",
+      "ದಿನ ದಿನ ಬರ್ತಾರ": "ಪ್ರತಿ ದಿನ ಬರುತ್ತಾರೆ (they come daily)"
+    },
+    "common_phrases": [
+      "ಸರ್, ನಮ್ಮ ಓಣ್ಯಾಗ ಒಂದ್ ಸಮಸ್ಯೆ ಐತ್",
+      "ಮಾರಾಯ, ಒಂದ್ ನೋಡ್ರಿ",
+      "ಖರೆ ಹೇಳ್ಬೇಕಂದ್ರ…"
+    ],
+    "code_mixing_patterns": [
+      "Heavy Marathi mixing: code-switch mid-sentence",
+      "Urdu honorifics: ಸಾಹೇಬ್",
+      "Border district: both Kannada and Marathi speakers"
+    ]
+  },
+  "kalaburagi": {
+    "district": "kalaburagi",
+    "dialect_tag": "hyderabad_ka",
+    "formality_register": "medium",
+    "vocabulary_hints": {
+      "ಆತ್ ಬಿಡ್ರಿ": "ಆಯಿತು (okay then)",
+      "ಮಾಡ್ರಿ": "ಮಾಡಿ (do it)",
+      "ಐತ್": "ಇದೆ (there is)",
+      "ಇಲ್ಲ್ ಬಿಡ್ರಿ": "ಇಲ್ಲ (there isn't)",
+      "ಹೌದ್ ಬಿಡ್ರಿ": "ಹೌದು (yes indeed)",
+      "ಏನ್ ಮಾಡ್ರಿ": "ಏನು ಮಾಡಲಿ (what to do?)",
+      "ನಮ್ ಕಡೆ": "ನಮ್ಮ ಕಡೆ (our side/area)",
+      "ಆ ಕಡೆ": "ಆ ಕಡೆ (that side)",
+      "ಬಾ ರಿ": "ಬನ್ನಿ (come, honorific)",
+      "ಪಾಪ ಬಿಡ್ರಿ": "ಪಾಪ (poor thing, sympathetic)",
+      "ಜಾಸ್ತಿ": "ಹೆಚ್ಚು (more)",
+      "ಕಮ್ಮಿ": "ಕಡಿಮೆ (less)",
+      "ಆಡ ಬಿಡ್ರಿ": "ಅದನ್ನ ಬಿಡಿ (leave that)"
+    },
+    "common_phrases": [
+      "ಸರ್, ನಮ್ ಕಡೆ ಒಂದ್ ಸಮಸ್ಯೆ ಐತ್ ಬಿಡ್ರಿ",
+      "ಆತ್ ಬಿಡ್ರಿ, ನೋಡ್ರಿ ಒಂದ್ ಸಲ",
+      "ಏನ್ ಮಾಡ್ರಿ ಸರ್?"
+    ],
+    "code_mixing_patterns": [
+      "Urdu/Telugu mixing: ಅಭಿ, ಠೀಕ್ ಹೈ",
+      "Hyderabadi Urdu influence: ಕ್ಯಾ ಬಾತ್ ಹೈ",
+      "Telugu loan words in daily speech"
+    ]
+  },
+  "vijayapura": {
+    "district": "vijayapura",
+    "dialect_tag": "hyderabad_ka",
+    "formality_register": "medium",
+    "vocabulary_hints": {
+      "ಆತ್": "ಆಯಿತು (okay, Urdu-influenced)",
+      "ಥೀಕ್ ಐತ್ಯಾ": "ಸರಿ ಇದೆಯಾ (is it okay?)",
+      "ಅಚ್ಛಾ ಮಾಡ್ರಿ": "ಚೆನ್ನಾಗಿ ಮಾಡಿ (do well)",
+      "ಜಲ್ದಿ": "ಬೇಗ (quickly, Urdu)",
+      "ಅಭಿ": "ಈಗ (now, Urdu)",
+      "ತಕ್ಲೀಫ್": "ತೊಂದರೆ (trouble, Urdu)",
+      "ಕ್ಯಾ": "ಏನು (what, Urdu/Hindi)",
+      "ನಹಿ": "ಇಲ್ಲ (no, Urdu/Hindi)",
+      "ಬಾತ್": "ವಿಷಯ (matter, Urdu)",
+      "ಕಭಿ ನಹಿ": "ಎಂದೂ ಇಲ್ಲ (never, Urdu)",
+      "ಸಾಹೇಬ್": "ಸರ್ (sir, formal Urdu)",
+      "ಮೇರಾ": "ನನ್ನ (my, Urdu)",
+      "ಆಪ್ ಲೋಗ್": "ನೀವು (you people, Urdu)"
+    },
+    "common_phrases": [
+      "ಸಾಹೇಬ್, ಒಂದ್ ತಕ್ಲೀಫ್ ಐತ್",
+      "ಅಭಿ ಕ್ಯಾ ಮಾಡ್ರಿ?",
+      "ಜಲ್ದಿ ಒಂದ್ ನೋಡ್ರಿ"
+    ],
+    "code_mixing_patterns": [
+      "Significant Urdu mixing: ತಕ್ಲೀಫ್, ಜಲ್ದಿ, ಸಾಹೇಬ್",
+      "Hindi film influence on younger speakers",
+      "Persian/Arabic loan words in formal context"
+    ]
+  },
+  "default": {
+    "district": "default",
+    "dialect_tag": "standard",
+    "formality_register": "medium",
+    "vocabulary_hints": {},
+    "common_phrases": [
+      "ನಮಸ್ಕಾರ, ನಿಮಗೆ ಸಹಾಯ ಮಾಡಲು ಸಿದ್ಧ",
+      "ದಯಮಾಡಿ ನಿಮ್ಮ ಸಮಸ್ಯೆ ಹೇಳಿ"
+    ],
+    "code_mixing_patterns": [
+      "Standard Kannada with minimal code-mixing"
+    ]
+  }
+}

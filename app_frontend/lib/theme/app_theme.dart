@@ -1,59 +1,42 @@
 import 'package:flutter/material.dart';
 
 class AppTheme {
-  // Backgrounds
-  static const Color scaffoldBg = Color(0xFF08080F);
-  static const Color cardBg = Color(0xFF11111C);
-  static const Color cardBg2 = Color(0xFF191928);
-  static const Color inputBg = Color(0xFF1E1E30);
+  static const Color ivory = Color(0xFFFBF6EC);
+  static const Color ivory2 = Color(0xFFF4ECD8);
+  static const Color teal = Color(0xFF0F4C46);
+  static const Color teal2 = Color(0xFF0B3A35);
+  static const Color tealSoft = Color(0xFFE8EFEC);
+  static const Color saffron = Color(0xFFD67B2C);
+  static const Color saffron2 = Color(0xFFB8651E);
+  static const Color ink = Color(0xFF1B1A17);
+  static const Color ink2 = Color(0xFF3A3833);
+  static const Color muted = Color(0xFF6E6A60);
+  static const Color hair = Color(0xFFE6E0CF);
+  static const Color sage = Color(0xFF5B8A72);
+  static const Color amber = Color(0xFFD4A547);
+  static const Color red = Color(0xFFC04545);
+  static const Color agentBg = Color(0xFFF6F5F1);
+  static const Color shellBg = Color(0xFF0E0E0C);
+  static const Color shellBorder = Color(0xFF1F1D18);
+  static const Color shellText = Color(0xFFE8E2D2);
+  static const Color shellMuted = Color(0xFF8A8676);
 
-  // Status
-  static const Color green = Color(0xFF00D26A);
-  static const Color greenBg = Color(0xFF092B1A);
-  static const Color red = Color(0xFFEF4444);
-  static const Color redBg = Color(0xFF2B0F0F);
-  static const Color orange = Color(0xFFF59E0B);
-  static const Color orangeBg = Color(0xFF2B1E0A);
-  static const Color purple = Color(0xFF8B5CF6);
-  static const Color purpleBg = Color(0xFF1A1040);
-  static const Color teal = Color(0xFF06B6D4);
-  static const Color tealBg = Color(0xFF0A2130);
-
-  // Text
-  static const Color textPrimary = Color(0xFFF1F5F9);
-  static const Color textSecondary = Color(0xFF94A3B8);
-  static const Color textMuted = Color(0xFF475569);
-
-  // Bubbles
-  static const Color citizenBubble = Color(0xFF14213D);
-  static const Color citizenHighStress = Color(0xFF2D1520);
-  static const Color aiBubble = Color(0xFF16112A);
-
-  // Borders
-  static const Color border = Color(0xFF1E2D3D);
-  static const Color borderBright = Color(0xFF2D3B50);
-
-  static ThemeData get darkTheme => ThemeData(
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: scaffoldBg,
-        fontFamily: 'Roboto',
-        colorScheme: const ColorScheme.dark(
-          primary: purple,
-          secondary: green,
-          surface: cardBg,
+  static ThemeData get theme => ThemeData(
+        brightness: Brightness.light,
+        scaffoldBackgroundColor: ivory,
+        fontFamily: 'Inter',
+        colorScheme: const ColorScheme.light(
+          primary: teal,
+          secondary: saffron,
+          surface: Colors.white,
           error: red,
         ),
         appBarTheme: const AppBarTheme(
-          backgroundColor: cardBg,
+          backgroundColor: shellBg,
+          foregroundColor: shellText,
           elevation: 0,
+          scrolledUnderElevation: 0,
           centerTitle: false,
-          iconTheme: IconThemeData(color: textSecondary),
-          titleTextStyle: TextStyle(
-            color: textPrimary,
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0.5,
-          ),
         ),
       );
 }
