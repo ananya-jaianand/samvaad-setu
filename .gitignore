@@ -1,0 +1,61 @@
+# ─── Python / Backend ─────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.Python
+
+# Virtual environment
+backend/venv/
+backend/.venv/
+venv/
+.venv/
+
+# Environment variables (never commit secrets)
+.env
+.env.*
+!.env.example
+
+# ─── Flutter / Dart ────────────────────────────────────────────────────────────
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+app_frontend/build/
+app_frontend/coverage/
+
+# Android build artifacts
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# Symbolication / obfuscation
+app.*.symbols
+app.*.map.json
+
+# ─── Docker ───────────────────────────────────────────────────────────────────
+*.dockerignore
+
+# ─── Editor / OS ──────────────────────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*.iml
+*.ipr
+*.iws
+Thumbs.db
+
+# ─── Logs & temp ──────────────────────────────────────────────────────────────
+*.log
+*.tmp
+*.bak

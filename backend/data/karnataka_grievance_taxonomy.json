@@ -1,0 +1,294 @@
+{
+  "version": "1.0",
+  "source": "Sevasindhu / Janasevaka Karnataka grievance categories",
+  "categories": [
+    {
+      "id": "water_connection_new",
+      "kn_label": "ಹೊಸ ನೀರಿನ ಸಂಪರ್ಕ",
+      "hi_label": "नया जल कनेक्शन",
+      "en_label": "New Water Connection",
+      "responsible_department": "BWSSB / Zilla Panchayat Water Supply",
+      "escalation_priority": 3
+    },
+    {
+      "id": "water_supply_complaint",
+      "kn_label": "ನೀರು ಸರಬರಾಜು ದೂರು",
+      "hi_label": "जल आपूर्ति शिकायत",
+      "en_label": "Water Supply Complaint",
+      "responsible_department": "BWSSB / Zilla Panchayat Water Supply",
+      "escalation_priority": 2
+    },
+    {
+      "id": "ration_card_application",
+      "kn_label": "ರೇಷನ್ ಕಾರ್ಡ್ ಅರ್ಜಿ",
+      "hi_label": "राशन कार्ड आवेदन",
+      "en_label": "Ration Card Application",
+      "responsible_department": "Department of Food and Civil Supplies",
+      "escalation_priority": 3
+    },
+    {
+      "id": "ration_card_status",
+      "kn_label": "ರೇಷನ್ ಕಾರ್ಡ್ ಸ್ಥಿತಿ",
+      "hi_label": "राशन कार्ड स्थिति",
+      "en_label": "Ration Card Status Inquiry",
+      "responsible_department": "Department of Food and Civil Supplies",
+      "escalation_priority": 4
+    },
+    {
+      "id": "ration_card_correction",
+      "kn_label": "ರೇಷನ್ ಕಾರ್ಡ್ ತಿದ್ದುಪಡಿ",
+      "hi_label": "राशन कार्ड सुधार",
+      "en_label": "Ration Card Correction",
+      "responsible_department": "Department of Food and Civil Supplies",
+      "escalation_priority": 3
+    },
+    {
+      "id": "bbmp_property_tax",
+      "kn_label": "ಬಿಬಿಎಂಪಿ ಆಸ್ತಿ ತೆರಿಗೆ",
+      "hi_label": "बीबीएमपी संपत्ति कर",
+      "en_label": "BBMP Property Tax",
+      "responsible_department": "BBMP Revenue",
+      "escalation_priority": 4
+    },
+    {
+      "id": "bbmp_khata_transfer",
+      "kn_label": "ಬಿಬಿಎಂಪಿ ಖಾತಾ ವರ್ಗಾವಣೆ",
+      "hi_label": "बीबीएमपी खाता स्थानांतरण",
+      "en_label": "BBMP Khata Transfer",
+      "responsible_department": "BBMP Revenue",
+      "escalation_priority": 3
+    },
+    {
+      "id": "bbmp_birth_certificate",
+      "kn_label": "ಬಿಬಿಎಂಪಿ ಜನನ ಪ್ರಮಾಣಪತ್ರ",
+      "hi_label": "बीबीएमपी जन्म प्रमाण पत्र",
+      "en_label": "BBMP Birth Certificate",
+      "responsible_department": "BBMP Health",
+      "escalation_priority": 3
+    },
+    {
+      "id": "birth_death_certificate",
+      "kn_label": "ಜನನ / ಮರಣ ಪ್ರಮಾಣಪತ್ರ",
+      "hi_label": "जन्म / मृत्यु प्रमाण पत्र",
+      "en_label": "Birth / Death Certificate",
+      "responsible_department": "Gram Panchayat / BBMP Health",
+      "escalation_priority": 3
+    },
+    {
+      "id": "bescom_billing",
+      "kn_label": "ಬೆಸ್ಕಾಂ ವಿದ್ಯುತ್ ಬಿಲ್ ದೂರು",
+      "hi_label": "बेस्कॉम बिजली बिल शिकायत",
+      "en_label": "BESCOM Electricity Billing Complaint",
+      "responsible_department": "BESCOM",
+      "escalation_priority": 3
+    },
+    {
+      "id": "bescom_new_connection",
+      "kn_label": "ಬೆಸ್ಕಾಂ ಹೊಸ ವಿದ್ಯುತ್ ಸಂಪರ್ಕ",
+      "hi_label": "बेस्कॉम नया बिजली कनेक्शन",
+      "en_label": "BESCOM New Electricity Connection",
+      "responsible_department": "BESCOM",
+      "escalation_priority": 3
+    },
+    {
+      "id": "electricity_outage",
+      "kn_label": "ವಿದ್ಯುತ್ ಕಡಿತ / ಅಡಚಣೆ",
+      "hi_label": "बिजली कटौती / रुकावट",
+      "en_label": "Electricity Outage / Disruption",
+      "responsible_department": "BESCOM / HESCOM / GESCOM / MESCOM",
+      "escalation_priority": 2
+    },
+    {
+      "id": "road_damage",
+      "kn_label": "ರಸ್ತೆ ಹಾನಿ / ಗುಂಡಿ",
+      "hi_label": "सड़क क्षति / गड्ढा",
+      "en_label": "Road Damage / Pothole",
+      "responsible_department": "PWD / BBMP Roads",
+      "escalation_priority": 3
+    },
+    {
+      "id": "road_repair",
+      "kn_label": "ರಸ್ತೆ ದುರಸ್ತಿ",
+      "hi_label": "सड़क मरम्मत",
+      "en_label": "Road Repair Request",
+      "responsible_department": "PWD / BBMP Roads",
+      "escalation_priority": 3
+    },
+    {
+      "id": "streetlight",
+      "kn_label": "ಬೀದಿ ದೀಪ ದೂರು",
+      "hi_label": "स्ट्रीटलाइट शिकायत",
+      "en_label": "Streetlight Complaint",
+      "responsible_department": "BBMP / Gram Panchayat",
+      "escalation_priority": 4
+    },
+    {
+      "id": "sanitation_garbage",
+      "kn_label": "ಕಸ / ನೈರ್ಮಲ್ಯ ದೂರು",
+      "hi_label": "कचरा / स्वच्छता शिकायत",
+      "en_label": "Garbage / Sanitation Complaint",
+      "responsible_department": "BBMP Solid Waste Management / Gram Panchayat",
+      "escalation_priority": 3
+    },
+    {
+      "id": "encroachment",
+      "kn_label": "ಅತಿಕ್ರಮಣ ದೂರು",
+      "hi_label": "अतिक्रमण शिकायत",
+      "en_label": "Encroachment Complaint",
+      "responsible_department": "BBMP / Revenue Department",
+      "escalation_priority": 3
+    },
+    {
+      "id": "public_health",
+      "kn_label": "ಸಾರ್ವಜನಿಕ ಆರೋಗ್ಯ ಸಮಸ್ಯೆ",
+      "hi_label": "सार्वजनिक स्वास्थ्य समस्या",
+      "en_label": "Public Health Issue",
+      "responsible_department": "BBMP Health / District Health Office",
+      "escalation_priority": 2
+    },
+    {
+      "id": "police_grievance",
+      "kn_label": "ಪೊಲೀಸ್ ದೂರು",
+      "hi_label": "पुलिस शिकायत",
+      "en_label": "Police Grievance",
+      "responsible_department": "Karnataka Police",
+      "escalation_priority": 2
+    },
+    {
+      "id": "women_safety",
+      "kn_label": "ಮಹಿಳಾ ಸುರಕ್ಷತೆ",
+      "hi_label": "महिला सुरक्षा",
+      "en_label": "Women Safety",
+      "responsible_department": "Karnataka Police / Women and Child Development",
+      "escalation_priority": 1
+    },
+    {
+      "id": "government_employee_grievance",
+      "kn_label": "ಸರ್ಕಾರಿ ನೌಕರ ದೂರು",
+      "hi_label": "सरकारी कर्मचारी शिकायत",
+      "en_label": "Government Employee Grievance",
+      "responsible_department": "Department of Personnel and Administrative Reforms",
+      "escalation_priority": 3
+    },
+    {
+      "id": "pension_issue",
+      "kn_label": "ಪಿಂಚಣಿ ಸಮಸ್ಯೆ",
+      "hi_label": "पेंशन समस्या",
+      "en_label": "Pension Issue",
+      "responsible_department": "Department of Treasury / Social Welfare",
+      "escalation_priority": 2
+    },
+    {
+      "id": "pension_scheme",
+      "kn_label": "ಪಿಂಚಣಿ ಯೋಜನೆ ಮಾಹಿತಿ",
+      "hi_label": "पेंशन योजना जानकारी",
+      "en_label": "Pension Scheme Inquiry",
+      "responsible_department": "Department of Social Welfare",
+      "escalation_priority": 4
+    },
+    {
+      "id": "school_admission",
+      "kn_label": "ಶಾಲಾ ಪ್ರವೇಶ",
+      "hi_label": "विद्यालय प्रवेश",
+      "en_label": "School Admission",
+      "responsible_department": "Department of School Education",
+      "escalation_priority": 3
+    },
+    {
+      "id": "scholarship",
+      "kn_label": "ವಿದ್ಯಾರ್ಥಿ ವೇತನ",
+      "hi_label": "छात्रवृत्ति",
+      "en_label": "Scholarship",
+      "responsible_department": "Department of School Education / Social Welfare / Backward Classes",
+      "escalation_priority": 2
+    },
+    {
+      "id": "land_records",
+      "kn_label": "ಭೂ ದಾಖಲೆಗಳು / RTC",
+      "hi_label": "भूमि अभिलेख",
+      "en_label": "Land Records / RTC",
+      "responsible_department": "Revenue Department / Bhoomi",
+      "escalation_priority": 3
+    },
+    {
+      "id": "drainage_sewage",
+      "kn_label": "ಚರಂಡಿ / ತ್ಯಾಜ್ಯ ನೀರು",
+      "hi_label": "नाली / सीवेज",
+      "en_label": "Drainage / Sewage Issue",
+      "responsible_department": "BBMP / Gram Panchayat",
+      "escalation_priority": 2
+    },
+    {
+      "id": "building_plan_approval",
+      "kn_label": "ಕಟ್ಟಡ ಯೋಜನೆ ಅನುಮೋದನೆ",
+      "hi_label": "भवन योजना अनुमोदन",
+      "en_label": "Building Plan Approval",
+      "responsible_department": "BBMP / BDA / Town Panchayat",
+      "escalation_priority": 4
+    },
+    {
+      "id": "caste_income_certificate",
+      "kn_label": "ಜಾತಿ / ಆದಾಯ ಪ್ರಮಾಣಪತ್ರ",
+      "hi_label": "जाति / आय प्रमाण पत्र",
+      "en_label": "Caste / Income Certificate",
+      "responsible_department": "Revenue Department / Tehsildar Office",
+      "escalation_priority": 3
+    },
+    {
+      "id": "disability_welfare",
+      "kn_label": "ವಿಕಲಾಂಗ ಕಲ್ಯಾಣ",
+      "hi_label": "विकलांग कल्याण",
+      "en_label": "Disability Welfare",
+      "responsible_department": "Department of Empowerment of Differently Abled",
+      "escalation_priority": 2
+    },
+    {
+      "id": "noise_pollution",
+      "kn_label": "ಶಬ್ದ ಮಾಲಿನ್ಯ",
+      "hi_label": "ध्वनि प्रदूषण",
+      "en_label": "Noise Pollution",
+      "responsible_department": "Karnataka State Pollution Control Board / Police",
+      "escalation_priority": 3
+    },
+    {
+      "id": "bus_transport_complaint",
+      "kn_label": "ಬಸ್ / ಸಾರಿಗೆ ದೂರು",
+      "hi_label": "बस / परिवहन शिकायत",
+      "en_label": "Bus / Transport Complaint",
+      "responsible_department": "KSRTC / BMTC",
+      "escalation_priority": 4
+    },
+    {
+      "id": "food_adulteration",
+      "kn_label": "ಆಹಾರ ಕಲ್ಮಶ",
+      "hi_label": "खाद्य मिलावट",
+      "en_label": "Food Adulteration",
+      "responsible_department": "Food Safety and Standards Authority",
+      "escalation_priority": 1
+    },
+    {
+      "id": "hospital_complaint",
+      "kn_label": "ಸರ್ಕಾರಿ ಆಸ್ಪತ್ರೆ ದೂರು",
+      "hi_label": "सरकारी अस्पताल शिकायत",
+      "en_label": "Government Hospital Complaint",
+      "responsible_department": "Department of Health and Family Welfare",
+      "escalation_priority": 1
+    },
+    {
+      "id": "distress_emergency",
+      "kn_label": "ತುರ್ತು ಸಂದರ್ಭ",
+      "hi_label": "आपात स्थिति",
+      "en_label": "Distress / Emergency",
+      "responsible_department": "Emergency Services / Police / Fire",
+      "escalation_priority": 1
+    },
+    {
+      "id": "other_grievance",
+      "kn_label": "ಇತರ ದೂರು",
+      "hi_label": "अन्य शिकायत",
+      "en_label": "Other Grievance",
+      "responsible_department": "General Administration",
+      "escalation_priority": 5
+    }
+  ]
+}
