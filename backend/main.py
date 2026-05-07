@@ -224,6 +224,45 @@ async def agent_correction(session_id: str, body: dict):
     return {"ok": ok, "session_id": session_id, "field": field, "value": value}
 
 
+@app.post("/sessions/{session_id}/agent-reply")
+async def agent_reply(session_id: str, body: dict):
+    """
+    Send a human-agent reply to the citizen's live WebSocket session.
+    Body: { "text": "...", "agent_id": "agent-001" }
+    """
+    text = (body.get("text") or "").strip()
+    agent_id = body.get("agent_id", "agent")
+    if not text:
+        raise HTTPException(400, "text is required")
+
+    session = await session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+
+    language = session.detected_language or "en"
+    tts_audio = ""
+    try:
+        tts_audio = await tts.synthesize(text, language=language)
+    except Exception as exc:
+        print(f"[AGENT_REPLY_HTTP] TTS failed: {exc}")
+
+    delivered = await send_to_citizen(session_id, {
+        "type": "agent_audio",
+        "text": text,
+        "tts_audio_b64": tts_audio,
+    })
+    if not delivered:
+        raise HTTPException(409, "Citizen is not connected to live session")
+
+    await log_event(
+        session_id,
+        "agent_reply_sent",
+        actor="agent",
+        payload={"agent_id": agent_id, "text": text},
+    )
+    return {"ok": True, "session_id": session_id, "delivered": True}
+
+
 @app.get("/sessions/{session_id}/full-context")
 async def full_context(session_id: str):
     """Full session context for the agent dashboard."""

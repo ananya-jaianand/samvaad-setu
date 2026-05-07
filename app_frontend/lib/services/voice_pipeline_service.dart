@@ -39,6 +39,7 @@ class VoicePipelineService {
   final _nluCtrl = StreamController<NluResult?>.broadcast();
   final _verifyPromptCtrl = StreamController<VerificationPrompt?>.broadcast();
   final _confidenceCtrl = StreamController<ConfidenceScore?>.broadcast();
+  final _mockModeCtrl = StreamController<bool?>.broadcast();
 
   Stream<PipelineState> get stateStream => _stateCtrl.stream;
   Stream<List<SessionTurn>> get turnsStream => _turnsCtrl.stream;
@@ -49,14 +50,17 @@ class VoicePipelineService {
   Stream<VerificationPrompt?> get verificationPromptStream =>
       _verifyPromptCtrl.stream;
   Stream<ConfidenceScore?> get confidenceStream => _confidenceCtrl.stream;
+  Stream<bool?> get mockModeStream => _mockModeCtrl.stream;
 
   PipelineState _currentState = PipelineState.idle;
   final List<SessionTurn> _turns = [];
   String _currentLanguage = AppConfig.defaultLanguage;
   String _currentDistrict = AppConfig.defaultDistrict;
+  bool? _isMockMode;
 
   String get currentLanguage => _currentLanguage;
   String get currentDistrict => _currentDistrict;
+  bool? get isMockMode => _isMockMode;
 
   VoicePipelineService() {
     _stateCtrl.add(_currentState);
@@ -129,6 +133,11 @@ class VoicePipelineService {
 
   Future<void> _handleMessage(Map<String, dynamic> data) async {
     final type = data['type'];
+
+    if (data['mock_mode'] is bool) {
+      _isMockMode = data['mock_mode'] as bool;
+      _mockModeCtrl.add(_isMockMode);
+    }
 
     if (data['session'] != null) {
       _sessionMetaCtrl.add(SessionMeta.fromJson(data['session']));
@@ -315,6 +324,8 @@ class VoicePipelineService {
     _escalationCtrl.add(null);
     _verifyPromptCtrl.add(null);
     _confidenceCtrl.add(null);
+    _mockModeCtrl.add(null);
+    _isMockMode = null;
     _setState(PipelineState.idle);
   }
 
@@ -332,6 +343,13 @@ class VoicePipelineService {
   void _addTurn(SessionTurn turn) {
     _turns.add(turn);
     _turnsCtrl.add(List.from(_turns));
+  }
+
+  /// Adds a local agent turn immediately (used for live shared-session UI sync).
+  void addLocalAgentTurn(String text) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return;
+    _addTurn(SessionTurn(speaker: 'agent', rawTranscript: trimmed));
   }
 
   Future<void> _playAudio(String b64) async {
@@ -364,5 +382,6 @@ class VoicePipelineService {
     _nluCtrl.close();
     _verifyPromptCtrl.close();
     _confidenceCtrl.close();
+    _mockModeCtrl.close();
   }
 }

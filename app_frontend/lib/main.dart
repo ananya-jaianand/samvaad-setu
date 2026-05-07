@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'theme/app_theme.dart';
@@ -39,16 +40,28 @@ class _AppShellState extends State<AppShell> {
   _View _view = _View.citizen;
   String _backendMode = '';
   late final VoicePipelineService _citizenSvc;
+  StreamSubscription<bool?>? _mockModeSub;
+  Timer? _modePollTimer;
 
   @override
   void initState() {
     super.initState();
     _citizenSvc = VoicePipelineService();
     _fetchBackendMode();
+    _mockModeSub = _citizenSvc.mockModeStream.listen((isMock) {
+      if (!mounted || isMock == null) return;
+      setState(() => _backendMode = isMock ? 'mock' : 'production');
+    });
+    _modePollTimer = Timer.periodic(
+      const Duration(seconds: 15),
+      (_) => _fetchBackendMode(),
+    );
   }
 
   @override
   void dispose() {
+    _mockModeSub?.cancel();
+    _modePollTimer?.cancel();
     _citizenSvc.dispose();
     super.dispose();
   }

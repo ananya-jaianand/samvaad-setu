@@ -162,12 +162,53 @@ class _AgentDashboardState extends State<AgentDashboard> {
 
   void _sendAgentReply() {
     final text = _replyCtrl.text.trim();
-    if (text.isEmpty || _activeItem == null || _agentWs == null) return;
-    _agentWs!.sink.add(jsonEncode({
-      'type': 'agent_reply',
-      'session_id': _activeItem!.sessionId,
-      'text': text,
-    }));
+    print('[AGENT_REPLY_DEBUG] text: "$text", activeItem: ${_activeItem?.sessionId}, agentWs: ${_agentWs != null}');
+
+    if (text.isEmpty) {
+      print('[AGENT_REPLY_DEBUG] Aborting: text is empty');
+      return;
+    }
+    if (_activeItem == null) {
+      print('[AGENT_REPLY_DEBUG] Aborting: no active item selected');
+      return;
+    }
+    // Prefer HTTP delivery (authoritative path to citizen socket). Keep WS send
+    // as best-effort backup to avoid regressions when backend route differs.
+    () async {
+      try {
+        final res = await http.post(
+          Uri.parse(
+              '${AppConfig.backendUrl}/sessions/${_activeItem!.sessionId}/agent-reply'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'text': text, 'agent_id': _agentId}),
+        );
+        print('[AGENT_REPLY_DEBUG] HTTP reply status: ${res.statusCode}');
+        if (res.statusCode >= 400 && _agentWs != null) {
+          final payload = {
+            'type': 'agent_reply',
+            'session_id': _activeItem!.sessionId,
+            'text': text,
+          };
+          _agentWs!.sink.add(jsonEncode(payload));
+          print('[AGENT_REPLY_DEBUG] Fallback WS send done');
+        }
+      } catch (e) {
+        print('[AGENT_REPLY_DEBUG] HTTP send error: $e');
+        if (_agentWs != null) {
+          try {
+            _agentWs!.sink.add(jsonEncode({
+              'type': 'agent_reply',
+              'session_id': _activeItem!.sessionId,
+              'text': text,
+            }));
+            print('[AGENT_REPLY_DEBUG] Fallback WS send after HTTP error');
+          } catch (wsErr) {
+            print('[AGENT_REPLY_DEBUG] WS fallback error: $wsErr');
+          }
+        }
+      }
+    }();
+
     // Optimistic update: add to the visible turn list immediately.
     // For live sessions the ConvPane renders _citizenLiveTurns (from the shared
     // VoicePipelineService), so add there directly. For demo/escalated sessions
@@ -178,6 +219,7 @@ class _AgentDashboardState extends State<AgentDashboard> {
     );
     setState(() {
       if (_isViewingLiveSession) {
+        widget.citizenSvc.addLocalAgentTurn(text);
         _citizenLiveTurns = [..._citizenLiveTurns, optimisticTurn];
       } else {
         _liveTurns.add({
@@ -215,10 +257,13 @@ class _AgentDashboardState extends State<AgentDashboard> {
   void _connectAgentWs() {
     final wsUri = Uri.parse(
         '${AppConfig.wsUrl.replaceFirst('/ws', '/ws/agent')}/$_agentId');
+    print('[AGENT_WS_DEBUG] Connecting to: $wsUri');
     try {
       _agentWs = WebSocketChannel.connect(wsUri);
+      print('[AGENT_WS_DEBUG] WebSocket instance created');
       _agentWs!.stream.listen(
         (msg) {
+          print('[AGENT_WS_DEBUG] Received message: ${msg.toString().substring(0, math.min(100, msg.toString().length))}');
           try {
             final data = jsonDecode(msg as String);
             final type = data['type'] as String? ?? '';

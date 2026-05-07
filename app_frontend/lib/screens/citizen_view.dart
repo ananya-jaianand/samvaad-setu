@@ -413,8 +413,10 @@ class _CitizenViewState extends State<CitizenView>
     }
 
     // While speaking or after: show the last AI or agent response
-    if ((state == PipelineState.speaking || state == PipelineState.ready ||
-            state == PipelineState.verifying) &&
+    if ((state == PipelineState.speaking ||
+            state == PipelineState.ready ||
+            state == PipelineState.verifying ||
+            state == PipelineState.escalated) &&
         lastAiTurn != null) {
       final isAgentTurn = lastAiTurn.speaker == 'agent';
       return Column(
