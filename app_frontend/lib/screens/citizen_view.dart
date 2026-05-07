@@ -34,7 +34,8 @@ const _verifyBtns = {
 // ─── CitizenView ──────────────────────────────────────────────────────────────
 
 class CitizenView extends StatefulWidget {
-  const CitizenView({super.key});
+  final VoicePipelineService svc;
+  const CitizenView({super.key, required this.svc});
 
   @override
   State<CitizenView> createState() => _CitizenViewState();
@@ -42,7 +43,7 @@ class CitizenView extends StatefulWidget {
 
 class _CitizenViewState extends State<CitizenView>
     with TickerProviderStateMixin {
-  final VoicePipelineService _svc = VoicePipelineService();
+  VoicePipelineService get _svc => widget.svc;
 
   String _lang = 'kn';
   bool _showHelp = false;
@@ -69,7 +70,6 @@ class _CitizenViewState extends State<CitizenView>
   void dispose() {
     _breathe.dispose();
     _barsCtrl.dispose();
-    _svc.dispose();
     super.dispose();
   }
 

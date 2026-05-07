@@ -521,9 +521,10 @@ async def agent_ws(websocket: WebSocket, agent_id: str):
     await websocket.accept()
     register_agent(agent_id, websocket)
 
-    # Send current queue snapshot on connect
-    entries = await get_queue(limit=20, offset=0)
-    total = await queue_length()
+    # Send current queue snapshot on connect — includes escalated + all active sessions
+    from services.agent_queue import get_active_sessions, total_active_sessions
+    entries = get_active_sessions(limit=50, offset=0)
+    total = total_active_sessions()
     try:
         await websocket.send_json({
             "type": "queue_snapshot",
@@ -819,6 +820,8 @@ async def _handle_audio_turn(websocket: WebSocket, session: SessionState, msg: d
         "session_id": session.session_id,
         "citizen_turn": citizen_turn.model_dump(mode="json"),
         "ai_turn": ai_turn.model_dump(mode="json"),
+        "confidence_score": turn_confidence.model_dump(),
+        "sentiment_timeline": session.sentiment_timeline[-10:],
         "session": {
             "session_id": session.session_id,
             "district": session.district,

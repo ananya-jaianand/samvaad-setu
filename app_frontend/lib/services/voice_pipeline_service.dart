@@ -55,6 +55,9 @@ class VoicePipelineService {
   String _currentLanguage = AppConfig.defaultLanguage;
   String _currentDistrict = AppConfig.defaultDistrict;
 
+  String get currentLanguage => _currentLanguage;
+  String get currentDistrict => _currentDistrict;
+
   VoicePipelineService() {
     _stateCtrl.add(_currentState);
     _turnsCtrl.add(_turns);
@@ -332,11 +335,19 @@ class VoicePipelineService {
   }
 
   Future<void> _playAudio(String b64) async {
+    if (b64.isEmpty) {
+      if (_currentState == PipelineState.speaking) _setState(PipelineState.ready);
+      return;
+    }
     _setState(PipelineState.speaking);
     try {
       final bytes = base64Decode(b64);
-      await _audioPlayer.play(BytesSource(bytes));
-      await _audioPlayer.onPlayerComplete.first;
+      // Skip playback for stub audio (≤ 100 bytes = mock silent WAV)
+      if (bytes.length > 100) {
+        await _audioPlayer.play(BytesSource(bytes));
+        await _audioPlayer.onPlayerComplete.first
+            .timeout(const Duration(seconds: 30), onTimeout: () {});
+      }
     } catch (_) {}
     if (_currentState == PipelineState.speaking) _setState(PipelineState.ready);
   }

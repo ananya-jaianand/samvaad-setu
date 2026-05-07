@@ -7,11 +7,13 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import '../theme/app_theme.dart';
 import '../models/session_models.dart';
 import '../config/app_config.dart';
+import '../services/voice_pipeline_service.dart';
 
 // ─── AgentDashboard ───────────────────────────────────────────────────────────
 
 class AgentDashboard extends StatefulWidget {
-  const AgentDashboard({super.key});
+  final VoicePipelineService citizenSvc;
+  const AgentDashboard({super.key, required this.citizenSvc});
 
   @override
   State<AgentDashboard> createState() => _AgentDashboardState();
@@ -44,12 +46,30 @@ class _AgentDashboardState extends State<AgentDashboard> {
   WebSocketChannel? _agentWs;
   Timer? _pollTimer;
 
+  // ── Live citizen session (shared VoicePipelineService) ────────────────────
+  List<SessionTurn> _citizenLiveTurns = [];
+  ConfidenceScore? _liveConfidence;
+  SessionMeta? _citizenSessionMeta;
+  StreamSubscription<List<SessionTurn>>? _citizenTurnsSub;
+  StreamSubscription<ConfidenceScore?>? _citizenConfSub;
+  StreamSubscription<SessionMeta?>? _citizenMetaSub;
+
   @override
   void initState() {
     super.initState();
     _seedThenFetch();
     _connectAgentWs();
     _pollTimer = Timer.periodic(const Duration(seconds: 15), (_) => _fetchQueue());
+
+    _citizenTurnsSub = widget.citizenSvc.turnsStream.listen((turns) {
+      if (mounted) setState(() => _citizenLiveTurns = turns);
+    });
+    _citizenConfSub = widget.citizenSvc.confidenceStream.listen((conf) {
+      if (mounted && conf != null) setState(() => _liveConfidence = conf);
+    });
+    _citizenMetaSub = widget.citizenSvc.sessionMetaStream.listen((meta) {
+      if (mounted && meta != null) setState(() => _citizenSessionMeta = meta);
+    });
   }
 
   @override
@@ -57,6 +77,9 @@ class _AgentDashboardState extends State<AgentDashboard> {
     _agentWs?.sink.close();
     _pollTimer?.cancel();
     _replyCtrl.dispose();
+    _citizenTurnsSub?.cancel();
+    _citizenConfSub?.cancel();
+    _citizenMetaSub?.cancel();
     super.dispose();
   }
 
@@ -331,6 +354,61 @@ class _AgentDashboardState extends State<AgentDashboard> {
     }
   }
 
+  // ─── Live session helpers ─────────────────────────────────────────────────
+
+  bool get _isViewingLiveSession =>
+      _activeItem?.sessionId == widget.citizenSvc.sessionId &&
+      widget.citizenSvc.sessionId != null;
+
+  Future<void> _selectLiveSession() async {
+    final sid = widget.citizenSvc.sessionId;
+    if (sid == null) return;
+
+    final existingIdx = _queue.indexWhere((q) => q.sessionId == sid);
+    if (existingIdx >= 0) {
+      _selectItem(_queue[existingIdx]);
+      return;
+    }
+
+    final item = AgentQueueItem(
+      sessionId: sid,
+      district: widget.citizenSvc.currentDistrict,
+      language: widget.citizenSvc.currentLanguage,
+      sentiment: _citizenSessionMeta?.currentSentiment ?? 'calm',
+      sentimentIntensity: _liveConfidence?.sentimentIntensity ?? 0.3,
+      reason: 'active',
+      summary: _citizenLiveTurns.isNotEmpty
+          ? _citizenLiveTurns.last.displayText
+          : 'Live call in progress',
+      createdAt: DateTime.now().toIso8601String(),
+    );
+
+    setState(() {
+      _activeItem = item;
+      _fullContext = null;
+      _liveTurns = [];
+      _contextLoading = true;
+      _reviewed = false;
+      _editedFields = {};
+    });
+
+    try {
+      final res = await http
+          .get(Uri.parse('${AppConfig.backendUrl}/sessions/$sid/full-context'))
+          .timeout(const Duration(seconds: 6));
+      if (res.statusCode == 200 && mounted) {
+        setState(() {
+          _fullContext = jsonDecode(res.body);
+          _contextLoading = false;
+        });
+      } else {
+        if (mounted) setState(() => _contextLoading = false);
+      }
+    } catch (_) {
+      if (mounted) setState(() => _contextLoading = false);
+    }
+  }
+
   // ─── Derived data ─────────────────────────────────────────────────────────
 
   List<Map<String, dynamic>> get _transcript {
@@ -394,6 +472,10 @@ class _AgentDashboardState extends State<AgentDashboard> {
                       loading: _queueLoading,
                       activeSessionId: _activeItem?.sessionId,
                       onSelect: _selectItem,
+                      liveSessionId: widget.citizenSvc.sessionId,
+                      liveDistrict: widget.citizenSvc.currentDistrict,
+                      liveTurnCount: _citizenLiveTurns.length,
+                      onSelectLive: _selectLiveSession,
                     ),
                   ),
                   // Center: conversation (45%)
@@ -406,10 +488,23 @@ class _AgentDashboardState extends State<AgentDashboard> {
                             item: _activeItem,
                             context: _fullContext,
                             loading: _contextLoading,
-                            transcript: _transcript,
-                            liveTurns: _liveTurns,
-                            sentTimeline: _sentTimeline,
+                            // When viewing the live session, use citizenSvc turns directly
+                            transcript: _isViewingLiveSession
+                                ? _citizenLiveTurns.map((t) => t.toAgentMap()).toList()
+                                : _transcript,
+                            liveTurns: _isViewingLiveSession ? const [] : _liveTurns,
+                            sentTimeline: _isViewingLiveSession &&
+                                    _citizenSessionMeta != null
+                                ? _citizenSessionMeta!.sentimentTimeline
+                                    .map((e) => {
+                                          'label': e.label,
+                                          'intensity': e.intensity,
+                                          'timestamp': e.timestamp,
+                                        })
+                                    .toList()
+                                : _sentTimeline,
                             revealLang: _revealLang,
+                            isLive: _isViewingLiveSession,
                           ),
                         ),
                         if (_activeItem != null)
@@ -429,6 +524,7 @@ class _AgentDashboardState extends State<AgentDashboard> {
                       reviewed: _reviewed,
                       onApprove: () => setState(() => _reviewed = true),
                       onUpdate: _sendCorrection,
+                      liveConfidence: _isViewingLiveSession ? _liveConfidence : null,
                     ),
                   ),
                 ],
@@ -756,11 +852,19 @@ class _QueuePane extends StatelessWidget {
   final bool loading;
   final String? activeSessionId;
   final ValueChanged<AgentQueueItem> onSelect;
+  final String? liveSessionId;
+  final String liveDistrict;
+  final int liveTurnCount;
+  final VoidCallback onSelectLive;
   const _QueuePane({
     required this.queue,
     required this.loading,
     this.activeSessionId,
     required this.onSelect,
+    this.liveSessionId,
+    this.liveDistrict = '',
+    this.liveTurnCount = 0,
+    required this.onSelectLive,
   });
 
   @override
