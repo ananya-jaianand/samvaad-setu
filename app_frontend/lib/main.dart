@@ -4,7 +4,10 @@ import 'package:http/http.dart' as http;
 import 'theme/app_theme.dart';
 import 'screens/citizen_view.dart';
 import 'screens/agent_dashboard.dart';
+import 'screens/analytics_dashboard.dart';
 import 'config/app_config.dart';
+
+enum _View { citizen, agent, analytics }
 
 void main() {
   runApp(const SamvaadSetuApp());
@@ -32,7 +35,7 @@ class AppShell extends StatefulWidget {
 }
 
 class _AppShellState extends State<AppShell> {
-  bool _showAgent = false;
+  _View _view = _View.citizen;
 
   /// Actual backend environment — fetched from /health on startup.
   /// Values: 'mock', 'production', or '' while loading.
@@ -58,21 +61,44 @@ class _AppShellState extends State<AppShell> {
     }
   }
 
+  Color get _bgColor {
+    switch (_view) {
+      case _View.citizen:
+        return AppTheme.ivory;
+      case _View.agent:
+      case _View.analytics:
+        return AppTheme.agentBg;
+    }
+  }
+
+  int get _viewIndex {
+    switch (_view) {
+      case _View.citizen: return 0;
+      case _View.agent: return 1;
+      case _View.analytics: return 2;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _showAgent ? AppTheme.agentBg : AppTheme.ivory,
+      backgroundColor: _bgColor,
       body: Column(
         children: [
           _TopNav(
-            showAgent: _showAgent,
-            onToggle: (v) => setState(() => _showAgent = v),
+            view: _view,
+            onSelect: (v) => setState(() => _view = v),
             backendMode: _backendMode,
           ),
           Expanded(
-            child: _showAgent
-                ? const AgentDashboard()
-                : const CitizenView(),
+            child: IndexedStack(
+              index: _viewIndex,
+              children: const [
+                CitizenView(),
+                AgentDashboard(),
+                AnalyticsDashboard(),
+              ],
+            ),
           ),
         ],
       ),
@@ -81,13 +107,13 @@ class _AppShellState extends State<AppShell> {
 }
 
 class _TopNav extends StatelessWidget {
-  final bool showAgent;
-  final ValueChanged<bool> onToggle;
+  final _View view;
+  final ValueChanged<_View> onSelect;
   final String backendMode;
 
   const _TopNav({
-    required this.showAgent,
-    required this.onToggle,
+    required this.view,
+    required this.onSelect,
     required this.backendMode,
   });
 
@@ -136,7 +162,7 @@ class _TopNav extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    Text(
+                    const Text(
                       '· Karnataka 1092',
                       style: TextStyle(
                         color: AppTheme.shellMuted,
@@ -159,13 +185,18 @@ class _TopNav extends StatelessWidget {
                     children: [
                       _SegBtn(
                         label: 'Citizen',
-                        active: !showAgent,
-                        onTap: () => onToggle(false),
+                        active: view == _View.citizen,
+                        onTap: () => onSelect(_View.citizen),
                       ),
                       _SegBtn(
                         label: 'Agent',
-                        active: showAgent,
-                        onTap: () => onToggle(true),
+                        active: view == _View.agent,
+                        onTap: () => onSelect(_View.agent),
+                      ),
+                      _SegBtn(
+                        label: 'Analytics',
+                        active: view == _View.analytics,
+                        onTap: () => onSelect(_View.analytics),
                       ),
                     ],
                   ),

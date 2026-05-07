@@ -34,6 +34,7 @@ class _AgentDashboardState extends State<AgentDashboard> {
   String _toastTitle = '';
   String _toastBody = '';
   bool _toastHigh = false;
+  String? _toastSessionId;
 
   Map<String, String> _editedFields = {};
 
@@ -46,7 +47,7 @@ class _AgentDashboardState extends State<AgentDashboard> {
   @override
   void initState() {
     super.initState();
-    _fetchQueue();
+    _seedThenFetch();
     _connectAgentWs();
     _pollTimer = Timer.periodic(const Duration(seconds: 15), (_) => _fetchQueue());
   }
@@ -60,6 +61,15 @@ class _AgentDashboardState extends State<AgentDashboard> {
   }
 
   // ─── Backend calls ────────────────────────────────────────────────────────
+
+  Future<void> _seedThenFetch() async {
+    try {
+      await http
+          .post(Uri.parse('${AppConfig.backendUrl}/demo/seed-agent-queue'))
+          .timeout(const Duration(seconds: 10));
+    } catch (_) {}
+    await _fetchQueue();
+  }
 
   Future<void> _fetchQueue() async {
     try {
@@ -179,13 +189,29 @@ class _AgentDashboardState extends State<AgentDashboard> {
             final data = jsonDecode(msg as String);
             final type = data['type'] as String? ?? '';
 
-            if (type == 'new_escalation') {
+            if (type == 'queue_snapshot') {
+              // Populate queue on WebSocket connect (reliable alternative to HTTP fetch)
+              final items = (data['items'] as List<dynamic>? ?? [])
+                  .map((e) => AgentQueueItem.fromJson(e as Map<String, dynamic>))
+                  .toList();
+              if (mounted) {
+                setState(() {
+                  _queue = items;
+                  _queueTotal = data['total'] ?? items.length;
+                  _queueLoading = false;
+                });
+                if (_activeItem == null && items.isNotEmpty) {
+                  _selectItem(items.first);
+                }
+              }
+            } else if (type == 'new_escalation') {
               final packet = data['packet'] as Map<String, dynamic>? ?? {};
               _showToastMsg(
                 title: 'New high-priority escalation',
                 body:
                     '${packet['district'] ?? ''} · ${packet['detected_language']?.toString().toUpperCase() ?? ''} · ${packet['summary'] ?? ''}',
                 high: true,
+                sessionId: packet['session_id'] as String?,
               );
               _fetchQueue();
             } else if (type == 'session_update') {
@@ -205,6 +231,16 @@ class _AgentDashboardState extends State<AgentDashboard> {
                 if (_activeItem == null && _queue.isNotEmpty) {
                   _selectItem(_queue.first);
                 }
+              }
+              // Notify agent when a new citizen call connects from another tab
+              if (!(s['is_escalated'] as bool? ?? false)) {
+                final district = s['district'] as String? ?? '';
+                final lang = (s['language'] as String? ?? '').toUpperCase();
+                _showToastMsg(
+                  title: 'New active call · $district',
+                  body: '$lang · ${s['summary'] ?? 'Citizen connected'}',
+                  high: false,
+                );
               }
             } else if (type == 'session_live_update') {
               final sessionId = data['session_id'] as String? ?? '';
@@ -227,6 +263,17 @@ class _AgentDashboardState extends State<AgentDashboard> {
                     _liveTurns.add(data['ai_turn'] as Map<String, dynamic>);
                   }
                 });
+              } else if (sessionId != _activeItem?.sessionId && mounted) {
+                // Citizen talking in another session — show notification
+                final citizenTurn = data['citizen_turn'] as Map<String, dynamic>?;
+                final snippet = citizenTurn?['raw_transcript'] as String? ?? '';
+                final district = sessionMeta['district'] as String? ?? sessionId.substring(0, 8);
+                final lang = (sessionMeta['language'] as String? ?? '').toUpperCase();
+                _showToastMsg(
+                  title: 'Citizen speaking · $district · $lang',
+                  body: snippet.length > 100 ? '${snippet.substring(0, 100)}…' : snippet,
+                  high: false,
+                );
               }
             } else if (type == 'session_ended') {
               final sessionId = data['session_id'] as String? ?? '';
@@ -252,16 +299,36 @@ class _AgentDashboardState extends State<AgentDashboard> {
   }
 
   void _showToastMsg(
-      {required String title, required String body, required bool high}) {
+      {required String title,
+      required String body,
+      required bool high,
+      String? sessionId}) {
     setState(() {
       _showToast = true;
       _toastTitle = title;
       _toastBody = body;
       _toastHigh = high;
+      _toastSessionId = sessionId;
     });
     Future.delayed(Duration(milliseconds: high ? 6500 : 3500), () {
       if (mounted) setState(() => _showToast = false);
     });
+  }
+
+  void _switchToToastSession() {
+    final sid = _toastSessionId;
+    if (sid == null) return;
+    setState(() => _showToast = false);
+    final idx = _queue.indexWhere((q) => q.sessionId == sid);
+    if (idx >= 0) {
+      _selectItem(_queue[idx]);
+    } else {
+      // Session not in queue yet — re-fetch then select
+      _fetchQueue().then((_) {
+        final i = _queue.indexWhere((q) => q.sessionId == sid);
+        if (i >= 0 && mounted) _selectItem(_queue[i]);
+      });
+    }
   }
 
   // ─── Derived data ─────────────────────────────────────────────────────────
@@ -378,6 +445,8 @@ class _AgentDashboardState extends State<AgentDashboard> {
               body: _toastBody,
               high: _toastHigh,
               onDismiss: () => setState(() => _showToast = false),
+              onSwitchToSession:
+                  _toastSessionId != null ? _switchToToastSession : null,
             ),
           ),
       ],
@@ -1037,7 +1106,17 @@ class _TurnRow extends StatelessWidget {
   const _TurnRow({required this.turn, required this.revealLang});
 
   String get _text {
-    // Backend stores all text in raw_transcript; no multi-lang in real turns
+    // Pick the language-specific translation when available
+    if (revealLang == 'en') {
+      final t = turn['en_text'] as String?;
+      if (t != null && t.isNotEmpty) return t;
+    } else if (revealLang == 'hi') {
+      final t = turn['hi_text'] as String?;
+      if (t != null && t.isNotEmpty) return t;
+    } else if (revealLang == 'kn') {
+      final t = turn['kn_text'] as String?;
+      if (t != null && t.isNotEmpty) return t;
+    }
     return (turn['raw_transcript'] ?? turn['ai_rephrasing'] ?? '') as String;
   }
 
@@ -1781,11 +1860,13 @@ class _Toast extends StatelessWidget {
   final String body;
   final bool high;
   final VoidCallback onDismiss;
+  final VoidCallback? onSwitchToSession;
   const _Toast(
       {required this.title,
       required this.body,
       required this.high,
-      required this.onDismiss});
+      required this.onDismiss,
+      this.onSwitchToSession});
 
   @override
   Widget build(BuildContext context) {
@@ -1836,16 +1917,19 @@ class _Toast extends StatelessWidget {
             const SizedBox(height: 8),
             Row(children: [
               Expanded(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                  decoration: BoxDecoration(
-                      color: AppTheme.teal,
-                      borderRadius: BorderRadius.circular(8)),
-                  child: const Center(
-                      child: Text('Switch to this session',
-                          style: TextStyle(
-                              fontSize: 12,
-                              color: Color(0xFFFFF7E5)))),
+                child: GestureDetector(
+                  onTap: onSwitchToSession ?? onDismiss,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    decoration: BoxDecoration(
+                        color: AppTheme.teal,
+                        borderRadius: BorderRadius.circular(8)),
+                    child: const Center(
+                        child: Text('Switch to this session',
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: Color(0xFFFFF7E5)))),
+                  ),
                 ),
               ),
               const SizedBox(width: 8),

@@ -243,21 +243,33 @@ async def full_context(session_id: str):
             "escalation_priority": _taxonomy.get_escalation_priority(session.final_intent),
         }
 
+    # Load demo translations (no-op for non-demo sessions)
+    try:
+        from demo_fixtures.demo_sessions import DEMO_TURN_TRANSLATIONS
+        _turn_translations = DEMO_TURN_TRANSLATIONS.get(session_id, {})
+    except Exception:
+        _turn_translations = {}
+
     # Build structured transcript (turns without TTS audio to keep payload lean)
-    transcript = [
-        {
+    transcript = []
+    for t in session.turns:
+        base_text = t.raw_transcript or t.ai_rephrasing or ""
+        t_trans = _turn_translations.get(t.turn_id, {})
+        transcript.append({
             "turn_id": t.turn_id,
             "speaker": t.speaker,
             "timestamp": t.timestamp.isoformat(),
-            "raw_transcript": t.raw_transcript,
+            "raw_transcript": base_text,
             "ai_rephrasing": t.ai_rephrasing,
             "intent": t.intent,
             "asr_confidence": t.asr_confidence,
             "sentiment": t.sentiment.model_dump() if t.sentiment else None,
             "verification_state": t.verification_state,
-        }
-        for t in session.turns
-    ]
+            # Language-specific text for the agent dashboard language toggle
+            "en_text": t_trans.get("en", base_text),
+            "hi_text": t_trans.get("hi", base_text),
+            "kn_text": t_trans.get("kn", base_text),
+        })
 
     return {
         "session_id": session.session_id,
@@ -344,6 +356,100 @@ async def export_training_data(format: str = "jsonl", since: Optional[str] = Non
         media_type="application/x-ndjson",
         headers={"Content-Disposition": "attachment; filename=verified_interactions.jsonl"},
     )
+
+
+# ─── ANALYTICS ───────────────────────────────────────────────────────────────
+
+_ANALYTICS_DISTRICT_DATA = [
+    {"district": "bengaluru_urban",  "label": "Bengaluru Urban",  "lat": 12.97, "lng": 77.59, "calls": 14, "escalated": 5, "avg_sentiment": 0.62, "primary_intent": "police_complaint"},
+    {"district": "mysuru",           "label": "Mysuru",           "lat": 12.30, "lng": 76.64, "calls":  9, "escalated": 2, "avg_sentiment": 0.42, "primary_intent": "ration_card_issue"},
+    {"district": "mangaluru",        "label": "Mangaluru",        "lat": 12.87, "lng": 74.84, "calls":  7, "escalated": 3, "avg_sentiment": 0.68, "primary_intent": "water_supply_complaint"},
+    {"district": "belagavi",         "label": "Belagavi",         "lat": 15.85, "lng": 74.50, "calls":  6, "escalated": 2, "avg_sentiment": 0.52, "primary_intent": "sanitation_garbage"},
+    {"district": "hubballi_dharwad", "label": "Hubballi-Dharwad", "lat": 15.36, "lng": 75.12, "calls":  5, "escalated": 2, "avg_sentiment": 0.48, "primary_intent": "road_repair"},
+    {"district": "kalaburagi",       "label": "Kalaburagi",       "lat": 17.33, "lng": 76.83, "calls":  5, "escalated": 2, "avg_sentiment": 0.55, "primary_intent": "pension_scheme"},
+    {"district": "tumakuru",         "label": "Tumakuru",         "lat": 13.34, "lng": 77.12, "calls":  5, "escalated": 1, "avg_sentiment": 0.40, "primary_intent": "ration_card_issue"},
+    {"district": "bengaluru_rural",  "label": "Bengaluru Rural",  "lat": 13.17, "lng": 77.60, "calls":  4, "escalated": 1, "avg_sentiment": 0.40, "primary_intent": "road_repair"},
+    {"district": "davangere",        "label": "Davangere",        "lat": 14.46, "lng": 75.92, "calls":  4, "escalated": 1, "avg_sentiment": 0.44, "primary_intent": "bescom_billing"},
+    {"district": "vijayapura",       "label": "Vijayapura",       "lat": 16.83, "lng": 75.71, "calls":  4, "escalated": 1, "avg_sentiment": 0.48, "primary_intent": "road_repair"},
+    {"district": "ballari",          "label": "Ballari",          "lat": 15.14, "lng": 76.92, "calls":  4, "escalated": 1, "avg_sentiment": 0.50, "primary_intent": "water_supply_complaint"},
+    {"district": "shivamogga",       "label": "Shivamogga",       "lat": 13.93, "lng": 75.57, "calls":  3, "escalated": 1, "avg_sentiment": 0.38, "primary_intent": "bescom_billing"},
+    {"district": "chitradurga",      "label": "Chitradurga",      "lat": 14.23, "lng": 76.40, "calls":  3, "escalated": 1, "avg_sentiment": 0.45, "primary_intent": "water_supply_complaint"},
+    {"district": "hassan",           "label": "Hassan",           "lat": 13.01, "lng": 76.10, "calls":  3, "escalated": 0, "avg_sentiment": 0.32, "primary_intent": "ration_card_issue"},
+    {"district": "udupi",            "label": "Udupi",            "lat": 13.34, "lng": 74.74, "calls":  3, "escalated": 1, "avg_sentiment": 0.35, "primary_intent": "water_connection"},
+    {"district": "raichur",          "label": "Raichur",          "lat": 16.21, "lng": 77.34, "calls":  3, "escalated": 1, "avg_sentiment": 0.55, "primary_intent": "pension_scheme"},
+    {"district": "bagalkot",         "label": "Bagalkot",         "lat": 16.18, "lng": 75.70, "calls":  3, "escalated": 1, "avg_sentiment": 0.45, "primary_intent": "road_repair"},
+    {"district": "koppal",           "label": "Koppal",           "lat": 15.35, "lng": 76.16, "calls":  2, "escalated": 1, "avg_sentiment": 0.50, "primary_intent": "water_supply_complaint"},
+    {"district": "bidar",            "label": "Bidar",            "lat": 17.91, "lng": 77.52, "calls":  2, "escalated": 1, "avg_sentiment": 0.60, "primary_intent": "pension_scheme"},
+    {"district": "gadag",            "label": "Gadag",            "lat": 15.42, "lng": 75.63, "calls":  2, "escalated": 0, "avg_sentiment": 0.40, "primary_intent": "sanitation_garbage"},
+    {"district": "haveri",           "label": "Haveri",           "lat": 14.79, "lng": 75.40, "calls":  2, "escalated": 0, "avg_sentiment": 0.42, "primary_intent": "sanitation_garbage"},
+    {"district": "ramanagara",       "label": "Ramanagara",       "lat": 12.72, "lng": 77.28, "calls":  2, "escalated": 0, "avg_sentiment": 0.35, "primary_intent": "ration_card_issue"},
+    {"district": "kodagu",           "label": "Kodagu",           "lat": 12.34, "lng": 75.81, "calls":  2, "escalated": 0, "avg_sentiment": 0.28, "primary_intent": "water_connection"},
+    {"district": "kolar",            "label": "Kolar",            "lat": 13.14, "lng": 78.13, "calls":  2, "escalated": 0, "avg_sentiment": 0.38, "primary_intent": "bescom_billing"},
+    {"district": "chikkamagaluru",   "label": "Chikkamagaluru",   "lat": 13.32, "lng": 75.77, "calls":  2, "escalated": 0, "avg_sentiment": 0.30, "primary_intent": "road_repair"},
+    {"district": "yadgir",           "label": "Yadgir",           "lat": 16.77, "lng": 77.13, "calls":  2, "escalated": 1, "avg_sentiment": 0.58, "primary_intent": "pension_scheme"},
+    {"district": "uttara_kannada",   "label": "Uttara Kannada",   "lat": 14.80, "lng": 74.50, "calls":  2, "escalated": 0, "avg_sentiment": 0.35, "primary_intent": "water_connection"},
+    {"district": "mandya",           "label": "Mandya",           "lat": 12.52, "lng": 76.90, "calls":  2, "escalated": 0, "avg_sentiment": 0.38, "primary_intent": "ration_card_issue"},
+    {"district": "chikkaballapur",   "label": "Chikkaballapur",   "lat": 13.44, "lng": 77.73, "calls":  1, "escalated": 0, "avg_sentiment": 0.32, "primary_intent": "road_repair"},
+    {"district": "chamarajanagar",   "label": "Chamarajanagara",  "lat": 11.92, "lng": 76.94, "calls":  1, "escalated": 0, "avg_sentiment": 0.30, "primary_intent": "ration_card_issue"},
+]
+
+
+@app.get("/analytics/overview")
+async def analytics_overview():
+    """Aggregated call analytics for the regional analytics dashboard."""
+    data = _ANALYTICS_DISTRICT_DATA
+    total_calls = sum(d["calls"] for d in data)
+    total_escalated = sum(d["escalated"] for d in data)
+    weighted_sentiment = (
+        sum(d["avg_sentiment"] * d["calls"] for d in data) / total_calls
+        if total_calls else 0
+    )
+    return {
+        "summary": {
+            "total_calls": total_calls,
+            "escalated_calls": total_escalated,
+            "resolved_calls": max(0, total_escalated - 4),
+            "avg_confidence": 0.71,
+            "avg_sentiment_intensity": round(weighted_sentiment, 2),
+        },
+        "by_district": data,
+        "intent_distribution": [
+            {"intent_id": "ration_card_issue",      "label": "Ration Card",      "count": 18},
+            {"intent_id": "water_supply_complaint",  "label": "Water Supply",     "count": 16},
+            {"intent_id": "police_complaint",        "label": "Police/Safety",    "count": 14},
+            {"intent_id": "road_repair",             "label": "Road Repair",      "count": 13},
+            {"intent_id": "pension_scheme",          "label": "Pension Scheme",   "count": 11},
+            {"intent_id": "sanitation_garbage",      "label": "Sanitation",       "count":  8},
+            {"intent_id": "bescom_billing",          "label": "BESCOM Billing",   "count":  7},
+            {"intent_id": "other",                   "label": "Other",            "count":  6},
+        ],
+        "escalation_reasons": [
+            {"reason": "high_distress",           "label": "High Distress",          "count": 12},
+            {"reason": "repeated_clarification",  "label": "Repeated Clarification", "count":  8},
+            {"reason": "low_confidence",          "label": "Low Confidence",         "count":  5},
+        ],
+        "language_distribution": [
+            {"language": "kn", "label": "Kannada", "count": 68},
+            {"language": "hi", "label": "Hindi",   "count": 22},
+            {"language": "en", "label": "English", "count": 10},
+        ],
+        "hourly_trend": [
+            {"hour":  8, "calls":  3, "escalated": 0},
+            {"hour":  9, "calls":  6, "escalated": 1},
+            {"hour": 10, "calls": 10, "escalated": 2},
+            {"hour": 11, "calls": 13, "escalated": 3},
+            {"hour": 12, "calls":  9, "escalated": 2},
+            {"hour": 13, "calls":  8, "escalated": 1},
+            {"hour": 14, "calls": 11, "escalated": 3},
+            {"hour": 15, "calls": 12, "escalated": 2},
+            {"hour": 16, "calls": 10, "escalated": 2},
+            {"hour": 17, "calls": 14, "escalated": 4},
+            {"hour": 18, "calls":  8, "escalated": 2},
+            {"hour": 19, "calls":  5, "escalated": 1},
+            {"hour": 20, "calls":  3, "escalated": 0},
+            {"hour": 21, "calls":  2, "escalated": 0},
+        ],
+    }
 
 
 # ─── DEMO / SEED ENDPOINTS ────────────────────────────────────────────────────
