@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = "redis://localhost:6379"
 
+    # Postgres
+    postgres_url: str = "postgresql://localhost:5432/samvaad_setu"
+
     # App
     environment: Literal["mock", "production"] = "mock"
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000", "http://localhost:8081"]
@@ -24,8 +27,12 @@ class Settings(BaseSettings):
 
     # Model config
     claude_model: str = "claude-sonnet-4-20250514"
-    sarvam_asr_model: str = "saarika:v2"
+    sarvam_asr_model: str = "saarika:v2.5"
     sarvam_tts_model: str = "bulbul:v1"
+
+    # Feature flags
+    enable_prosody: bool = False            # set True to activate librosa prosodic extraction
+    pii_redaction_enabled: bool = False     # set True in production to mask PII before LLM calls
 
     class Config:
         env_file = ".env"

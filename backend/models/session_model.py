@@ -5,16 +5,17 @@ import uuid
 
 SentimentClass = Literal["distress", "anger", "fear", "urgency", "confusion", "calm"]
 VerificationState = Literal["correct", "partially_correct", "incorrect", "pending"]
+SessionVerificationState = Literal["pending", "confirmed", "partial", "rejected", "escalated"]
 EscalationReason = Literal[
     "high_distress", "low_asr_confidence", "high_intent_entropy",
-    "repeated_clarification", "explicit_request", "none"
+    "low_confidence", "repeated_clarification", "explicit_request", "none"
 ]
 
 class TurnSentiment(BaseModel):
     label: SentimentClass
-    score: float                    # 0–1
-    prosodic_score: float = 0.0
-    text_score: float = 0.0
+    intensity: float                 # 0–1, dominant emotion intensity
+    prosodic_component: float = 0.0
+    text_component: float = 0.0
 
 class Turn(BaseModel):
     turn_id: str = Field(default_factory=lambda: str(uuid.uuid4())[:8])
@@ -35,16 +36,20 @@ class SessionState(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     district: str = "default"
     detected_language: str = "kn"
+    dialect_tag: Optional[str] = None          # populated from dialect_context on first audio turn
     turns: list[Turn] = []
+    verification_state: SessionVerificationState = "pending"
     clarification_count: int = 0
     is_escalated: bool = False
     escalation_reason: EscalationReason = "none"
-    escalation_summary: str = ""    # one-line context for human agent
+    escalation_summary: str = ""               # one-line context for human agent
     final_intent: Optional[str] = None
     composite_confidence: float = 1.0
+    is_resolved: bool = False                  # set by agent via POST /sessions/{id}/resolve
 
-    # Running sentiment timeline (for dashboard)
+    # Running timelines (for agent dashboard)
     sentiment_timeline: list[dict] = []
+    confidence_history: list[dict] = []        # per-turn composite score breakdown
 
     def add_turn(self, turn: Turn):
         self.turns.append(turn)
@@ -53,8 +58,13 @@ class SessionState(BaseModel):
                 "turn_id": turn.turn_id,
                 "timestamp": turn.timestamp.isoformat(),
                 "label": turn.sentiment.label,
-                "score": turn.sentiment.score,
+                "intensity": turn.sentiment.intensity,
+                "prosodic_component": turn.sentiment.prosodic_component,
+                "text_component": turn.sentiment.text_component,
             })
+            # Cap at last 20 entries to bound memory and WebSocket payload size
+            if len(self.sentiment_timeline) > 20:
+                self.sentiment_timeline = self.sentiment_timeline[-20:]
 
     def citizen_turns(self) -> list[Turn]:
         return [t for t in self.turns if t.speaker == "citizen"]
