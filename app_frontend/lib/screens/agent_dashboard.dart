@@ -162,12 +162,35 @@ class _AgentDashboardState extends State<AgentDashboard> {
 
   void _sendAgentReply() {
     final text = _replyCtrl.text.trim();
-    if (text.isEmpty || _activeItem == null || _agentWs == null) return;
-    _agentWs!.sink.add(jsonEncode({
-      'type': 'agent_reply',
-      'session_id': _activeItem!.sessionId,
-      'text': text,
-    }));
+    print('[AGENT_REPLY_DEBUG] text: "$text", activeItem: ${_activeItem?.sessionId}, agentWs: ${_agentWs != null}');
+
+    if (text.isEmpty) {
+      print('[AGENT_REPLY_DEBUG] Aborting: text is empty');
+      return;
+    }
+    if (_activeItem == null) {
+      print('[AGENT_REPLY_DEBUG] Aborting: no active item selected');
+      return;
+    }
+    if (_agentWs == null) {
+      print('[AGENT_REPLY_DEBUG] Aborting: agent WebSocket not connected');
+      return;
+    }
+
+    try {
+      final payload = {
+        'type': 'agent_reply',
+        'session_id': _activeItem!.sessionId,
+        'text': text,
+      };
+      print('[AGENT_REPLY_DEBUG] Sending payload: ${jsonEncode(payload)}');
+      _agentWs!.sink.add(jsonEncode(payload));
+      print('[AGENT_REPLY_DEBUG] Message sent successfully');
+    } catch (e) {
+      print('[AGENT_REPLY_DEBUG] Error sending message: $e');
+      return;
+    }
+
     // Optimistic update: add to the visible turn list immediately.
     // For live sessions the ConvPane renders _citizenLiveTurns (from the shared
     // VoicePipelineService), so add there directly. For demo/escalated sessions
@@ -215,10 +238,13 @@ class _AgentDashboardState extends State<AgentDashboard> {
   void _connectAgentWs() {
     final wsUri = Uri.parse(
         '${AppConfig.wsUrl.replaceFirst('/ws', '/ws/agent')}/$_agentId');
+    print('[AGENT_WS_DEBUG] Connecting to: $wsUri');
     try {
       _agentWs = WebSocketChannel.connect(wsUri);
+      print('[AGENT_WS_DEBUG] WebSocket instance created');
       _agentWs!.stream.listen(
         (msg) {
+          print('[AGENT_WS_DEBUG] Received message: ${msg.toString().substring(0, math.min(100, msg.toString().length))}');
           try {
             final data = jsonDecode(msg as String);
             final type = data['type'] as String? ?? '';
