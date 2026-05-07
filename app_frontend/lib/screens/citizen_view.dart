@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
@@ -130,8 +131,9 @@ class _CitizenViewState extends State<CitizenView>
             final turns = turnsSnap.data ?? [];
             final lastCitizenTurn = turns.lastWhereOrNull(
                 (t) => t.speaker == 'citizen');
-            final lastAiTurn =
-                turns.lastWhereOrNull((t) => t.speaker == 'ai');
+            // Include 'agent' turns so human-agent replies are visible to the citizen
+            final lastAiTurn = turns.lastWhereOrNull(
+                (t) => t.speaker == 'ai' || t.speaker == 'agent');
 
             return StreamBuilder<VerificationPrompt?>(
               stream: _svc.verificationPromptStream,
@@ -410,21 +412,52 @@ class _CitizenViewState extends State<CitizenView>
       );
     }
 
-    // While speaking or after: show the AI's last response
+    // While speaking or after: show the last AI or agent response
     if ((state == PipelineState.speaking || state == PipelineState.ready ||
             state == PipelineState.verifying) &&
         lastAiTurn != null) {
-      return Text(
-        lastAiTurn.displayText,
-        key: ValueKey('ai-${lastAiTurn.turnId}'),
-        textAlign: TextAlign.center,
-        style: TextStyle(
-          fontSize: 26,
-          height: 1.45,
-          color: AppTheme.teal2,
-          fontWeight: FontWeight.w500,
-          fontFamily: _fontFamily,
-        ),
+      final isAgentTurn = lastAiTurn.speaker == 'agent';
+      return Column(
+        key: ValueKey('${isAgentTurn ? 'ag' : 'ai'}-${lastAiTurn.turnId}'),
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (isAgentTurn)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 6),
+              child: Text(
+                'Agent',
+                style: TextStyle(
+                  fontSize: 11,
+                  letterSpacing: 0.1,
+                  color: AppTheme.muted,
+                  fontFamily: 'Inter',
+                ),
+              ),
+            ),
+          if (isAgentTurn)
+            _TypewriterText(
+              text: lastAiTurn.displayText,
+              style: TextStyle(
+                fontSize: 26,
+                height: 1.45,
+                color: AppTheme.saffron2,
+                fontWeight: FontWeight.w500,
+                fontFamily: _fontFamily,
+              ),
+            )
+          else
+            Text(
+              lastAiTurn.displayText,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 26,
+                height: 1.45,
+                color: AppTheme.teal2,
+                fontWeight: FontWeight.w500,
+                fontFamily: _fontFamily,
+              ),
+            ),
+        ],
       );
     }
 
@@ -1446,5 +1479,66 @@ extension _ListExt<T> on List<T> {
       if (test(this[i])) return this[i];
     }
     return null;
+  }
+}
+
+// ─── Typewriter caption for live agent replies ────────────────────────────────
+
+class _TypewriterText extends StatefulWidget {
+  final String text;
+  final TextStyle style;
+
+  const _TypewriterText({required this.text, required this.style});
+
+  @override
+  State<_TypewriterText> createState() => _TypewriterTextState();
+}
+
+class _TypewriterTextState extends State<_TypewriterText> {
+  int _visible = 0;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _start(widget.text);
+  }
+
+  @override
+  void didUpdateWidget(_TypewriterText old) {
+    super.didUpdateWidget(old);
+    if (old.text != widget.text) {
+      _timer?.cancel();
+      _visible = 0;
+      _start(widget.text);
+    }
+  }
+
+  void _start(String text) {
+    _timer = Timer.periodic(const Duration(milliseconds: 22), (_) {
+      if (!mounted) return;
+      if (_visible < text.length) {
+        setState(() => _visible++);
+      } else {
+        _timer?.cancel();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final shown = widget.text.substring(0, _visible);
+    final done = _visible >= widget.text.length;
+    return Text(
+      done ? shown : '$shown▌',
+      textAlign: TextAlign.center,
+      style: widget.style,
+    );
   }
 }

@@ -168,13 +168,24 @@ class _AgentDashboardState extends State<AgentDashboard> {
       'session_id': _activeItem!.sessionId,
       'text': text,
     }));
-    // Show it immediately in the live transcript
+    // Optimistic update: add to the visible turn list immediately.
+    // For live sessions the ConvPane renders _citizenLiveTurns (from the shared
+    // VoicePipelineService), so add there directly. For demo/escalated sessions
+    // _liveTurns is the right place.
+    final optimisticTurn = SessionTurn(
+      speaker: 'agent',
+      rawTranscript: text,
+    );
     setState(() {
-      _liveTurns.add({
-        'speaker': 'agent',
-        'raw_transcript': text,
-        'timestamp': DateTime.now().toIso8601String(),
-      });
+      if (_isViewingLiveSession) {
+        _citizenLiveTurns = [..._citizenLiveTurns, optimisticTurn];
+      } else {
+        _liveTurns.add({
+          'speaker': 'agent',
+          'raw_transcript': text,
+          'timestamp': DateTime.now().toIso8601String(),
+        });
+      }
     });
     _replyCtrl.clear();
   }
