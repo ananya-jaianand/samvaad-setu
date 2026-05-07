@@ -11,14 +11,7 @@ import '../config/app_config.dart';
 // ─── AgentDashboard ───────────────────────────────────────────────────────────
 
 class AgentDashboard extends StatefulWidget {
-  final bool demoDataEnabled;
-  final ValueChanged<bool> onDemoToggle;
-
-  const AgentDashboard({
-    super.key,
-    required this.demoDataEnabled,
-    required this.onDemoToggle,
-  });
+  const AgentDashboard({super.key});
 
   @override
   State<AgentDashboard> createState() => _AgentDashboardState();
@@ -44,55 +37,26 @@ class _AgentDashboardState extends State<AgentDashboard> {
 
   Map<String, String> _editedFields = {};
 
+  List<Map<String, dynamic>> _liveTurns = [];
+  final TextEditingController _replyCtrl = TextEditingController();
+
   WebSocketChannel? _agentWs;
   Timer? _pollTimer;
 
   @override
   void initState() {
     super.initState();
-    if (widget.demoDataEnabled) {
-      _seedDemoData().then((_) => _fetchQueue());
-    } else {
-      _fetchQueue();
-    }
+    _fetchQueue();
     _connectAgentWs();
     _pollTimer = Timer.periodic(const Duration(seconds: 15), (_) => _fetchQueue());
-  }
-
-  @override
-  void didUpdateWidget(covariant AgentDashboard old) {
-    super.didUpdateWidget(old);
-    if (old.demoDataEnabled == widget.demoDataEnabled) return;
-    if (widget.demoDataEnabled) {
-      _seedDemoData().then((_) => _fetchQueue());
-    } else {
-      _clearDemoData().then((_) => _fetchQueue());
-    }
   }
 
   @override
   void dispose() {
     _agentWs?.sink.close();
     _pollTimer?.cancel();
+    _replyCtrl.dispose();
     super.dispose();
-  }
-
-  // ─── Demo data ────────────────────────────────────────────────────────────
-
-  Future<void> _seedDemoData() async {
-    try {
-      await http
-          .post(Uri.parse('${AppConfig.backendUrl}/demo/seed-agent-queue'))
-          .timeout(const Duration(seconds: 8));
-    } catch (_) {}
-  }
-
-  Future<void> _clearDemoData() async {
-    try {
-      await http
-          .delete(Uri.parse('${AppConfig.backendUrl}/demo/clear-agent-queue'))
-          .timeout(const Duration(seconds: 8));
-    } catch (_) {}
   }
 
   // ─── Backend calls ────────────────────────────────────────────────────────
@@ -128,6 +92,7 @@ class _AgentDashboardState extends State<AgentDashboard> {
     setState(() {
       _activeItem = item;
       _fullContext = null;
+      _liveTurns = [];
       _contextLoading = true;
       _reviewed = false;
       _editedFields = {};
@@ -162,6 +127,25 @@ class _AgentDashboardState extends State<AgentDashboard> {
     } catch (_) {}
   }
 
+  void _sendAgentReply() {
+    final text = _replyCtrl.text.trim();
+    if (text.isEmpty || _activeItem == null || _agentWs == null) return;
+    _agentWs!.sink.add(jsonEncode({
+      'type': 'agent_reply',
+      'session_id': _activeItem!.sessionId,
+      'text': text,
+    }));
+    // Show it immediately in the live transcript
+    setState(() {
+      _liveTurns.add({
+        'speaker': 'agent',
+        'raw_transcript': text,
+        'timestamp': DateTime.now().toIso8601String(),
+      });
+    });
+    _replyCtrl.clear();
+  }
+
   Future<void> _resolveSession() async {
     if (_activeItem == null || !_reviewed) return;
     try {
@@ -193,7 +177,9 @@ class _AgentDashboardState extends State<AgentDashboard> {
         (msg) {
           try {
             final data = jsonDecode(msg as String);
-            if (data['type'] == 'new_escalation') {
+            final type = data['type'] as String? ?? '';
+
+            if (type == 'new_escalation') {
               final packet = data['packet'] as Map<String, dynamic>? ?? {};
               _showToastMsg(
                 title: 'New high-priority escalation',
@@ -202,6 +188,59 @@ class _AgentDashboardState extends State<AgentDashboard> {
                 high: true,
               );
               _fetchQueue();
+            } else if (type == 'session_update') {
+              final s = data['session'] as Map<String, dynamic>? ?? {};
+              final item = AgentQueueItem.fromJson(s);
+              if (mounted) {
+                setState(() {
+                  final idx = _queue.indexWhere((q) => q.sessionId == item.sessionId);
+                  if (idx >= 0) {
+                    _queue[idx] = item;
+                  } else {
+                    _queue.add(item);
+                  }
+                  _queueTotal = _queue.length;
+                  _queueLoading = false;
+                });
+                if (_activeItem == null && _queue.isNotEmpty) {
+                  _selectItem(_queue.first);
+                }
+              }
+            } else if (type == 'session_live_update') {
+              final sessionId = data['session_id'] as String? ?? '';
+              // Update queue card with latest state
+              final sessionMeta = data['session'] as Map<String, dynamic>? ?? {};
+              if (sessionMeta.isNotEmpty && mounted) {
+                final updated = AgentQueueItem.fromJson(sessionMeta);
+                setState(() {
+                  final idx = _queue.indexWhere((q) => q.sessionId == sessionId);
+                  if (idx >= 0) _queue[idx] = updated;
+                });
+              }
+              // Append new turns to live transcript if this session is active
+              if (sessionId == _activeItem?.sessionId && mounted) {
+                setState(() {
+                  if (data['citizen_turn'] != null) {
+                    _liveTurns.add(data['citizen_turn'] as Map<String, dynamic>);
+                  }
+                  if (data['ai_turn'] != null) {
+                    _liveTurns.add(data['ai_turn'] as Map<String, dynamic>);
+                  }
+                });
+              }
+            } else if (type == 'session_ended') {
+              final sessionId = data['session_id'] as String? ?? '';
+              if (mounted) {
+                setState(() {
+                  _queue.removeWhere((q) => q.sessionId == sessionId);
+                  _queueTotal = _queue.length;
+                  if (_activeItem?.sessionId == sessionId) {
+                    _activeItem = null;
+                    _fullContext = null;
+                    _liveTurns = [];
+                  }
+                });
+              }
             }
           } catch (_) {}
         },
@@ -271,8 +310,6 @@ class _AgentDashboardState extends State<AgentDashboard> {
               queueTotal: _queueTotal,
               reviewed: _reviewed,
               onResolve: _resolveSession,
-              demoDataEnabled: widget.demoDataEnabled,
-              onDemoToggle: widget.onDemoToggle,
             ),
             _AgSubBar(
               revealLang: _revealLang,
@@ -295,13 +332,25 @@ class _AgentDashboardState extends State<AgentDashboard> {
                   // Center: conversation (45%)
                   Expanded(
                     flex: 45,
-                    child: _ConvPane(
-                      item: _activeItem,
-                      context: _fullContext,
-                      loading: _contextLoading,
-                      transcript: _transcript,
-                      sentTimeline: _sentTimeline,
-                      revealLang: _revealLang,
+                    child: Column(
+                      children: [
+                        Expanded(
+                          child: _ConvPane(
+                            item: _activeItem,
+                            context: _fullContext,
+                            loading: _contextLoading,
+                            transcript: _transcript,
+                            liveTurns: _liveTurns,
+                            sentTimeline: _sentTimeline,
+                            revealLang: _revealLang,
+                          ),
+                        ),
+                        if (_activeItem != null)
+                          _AgentReplyBar(
+                            controller: _replyCtrl,
+                            onSend: _sendAgentReply,
+                          ),
+                      ],
                     ),
                   ),
                   // Right: interpretation (30%)
@@ -342,15 +391,11 @@ class _AgBar extends StatelessWidget {
   final int queueTotal;
   final bool reviewed;
   final VoidCallback onResolve;
-  final bool demoDataEnabled;
-  final ValueChanged<bool> onDemoToggle;
 
   const _AgBar({
     required this.queueTotal,
     required this.reviewed,
     required this.onResolve,
-    required this.demoDataEnabled,
-    required this.onDemoToggle,
   });
 
   @override
@@ -448,45 +493,6 @@ class _AgBar extends StatelessWidget {
               const Text('in queue',
                   style: TextStyle(fontSize: 12.5)),
             ]),
-          ),
-          const SizedBox(width: 14),
-          // Demo data toggle
-          GestureDetector(
-            onTap: () => onDemoToggle(!demoDataEnabled),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              padding: const EdgeInsets.fromLTRB(10, 5, 10, 5),
-              decoration: BoxDecoration(
-                color: demoDataEnabled
-                    ? AppTheme.teal.withValues(alpha: 0.12)
-                    : Colors.white,
-                border: Border.all(
-                  color: demoDataEnabled ? AppTheme.teal : AppTheme.hair,
-                ),
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Container(
-                  width: 6,
-                  height: 6,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: demoDataEnabled ? AppTheme.teal : AppTheme.muted,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  demoDataEnabled ? 'Demo data on' : 'Demo data',
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    color: demoDataEnabled ? AppTheme.teal2 : AppTheme.muted,
-                    fontWeight: demoDataEnabled
-                        ? FontWeight.w600
-                        : FontWeight.w400,
-                  ),
-                ),
-              ]),
-            ),
           ),
           const SizedBox(width: 14),
           // Agent identity
@@ -705,7 +711,7 @@ class _QueuePane extends StatelessWidget {
                         color: AppTheme.teal, strokeWidth: 2))
                 : queue.isEmpty
                     ? const Center(
-                        child: Text('No escalated sessions',
+                        child: Text('No active sessions',
                             style: TextStyle(
                                 color: AppTheme.muted, fontSize: 13)))
                     : ListView.builder(
@@ -891,6 +897,7 @@ class _ConvPane extends StatelessWidget {
   final Map<String, dynamic>? context;
   final bool loading;
   final List<Map<String, dynamic>> transcript;
+  final List<Map<String, dynamic>> liveTurns;
   final List<Map<String, dynamic>> sentTimeline;
   final String revealLang;
   const _ConvPane({
@@ -898,6 +905,7 @@ class _ConvPane extends StatelessWidget {
     required this.context,
     required this.loading,
     required this.transcript,
+    required this.liveTurns,
     required this.sentTimeline,
     required this.revealLang,
   });
@@ -947,23 +955,26 @@ class _ConvPane extends StatelessWidget {
                 ],
               ),
             ),
-            // Turns
+            // Turns — combine fetched history with live updates
             Expanded(
-              child: transcript.isEmpty
-                  ? const Center(
-                      child: Text('No transcript yet',
-                          style: TextStyle(
-                              color: AppTheme.muted, fontSize: 13)))
-                  : ListView.builder(
-                      padding: const EdgeInsets.all(18),
-                      itemCount: transcript.length,
-                      itemBuilder: (_, i) => Padding(
-                        padding: const EdgeInsets.only(bottom: 14),
-                        child: _TurnRow(
-                            turn: transcript[i],
-                            revealLang: revealLang),
-                      ),
-                    ),
+              child: Builder(builder: (ctx) {
+                final allTurns = [...transcript, ...liveTurns];
+                return allTurns.isEmpty
+                    ? const Center(
+                        child: Text('No transcript yet',
+                            style: TextStyle(
+                                color: AppTheme.muted, fontSize: 13)))
+                    : ListView.builder(
+                        padding: const EdgeInsets.all(18),
+                        itemCount: allTurns.length,
+                        itemBuilder: (_, i) => Padding(
+                          padding: const EdgeInsets.only(bottom: 14),
+                          child: _TurnRow(
+                              turn: allTurns[i],
+                              revealLang: revealLang),
+                        ),
+                      );
+              }),
             ),
             // Sentiment timeline
             Container(
@@ -1058,6 +1069,26 @@ class _TurnRow extends StatelessWidget {
       confFg = const Color(0xFF2E5640);
     }
 
+    final isAgent = (turn['speaker'] ?? '') == 'agent';
+
+    final avatarColor = isCit
+        ? const Color(0xFFFFF1DD)
+        : isAgent
+            ? const Color(0xFFF0EAF8)
+            : AppTheme.tealSoft;
+    final avatarBorder = isCit
+        ? const Color(0xFFF1DDA7)
+        : isAgent
+            ? const Color(0xFFCDB8E8)
+            : const Color(0xFFC9DCD5);
+    final avatarTextColor = isCit
+        ? AppTheme.saffron2
+        : isAgent
+            ? const Color(0xFF5C3D8F)
+            : AppTheme.teal2;
+    final avatarLabel = isCit ? 'C' : (isAgent ? 'AG' : 'AI');
+    final speakerLabel = isCit ? 'Citizen' : (isAgent ? 'Agent' : 'AI Assistant');
+
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1066,22 +1097,16 @@ class _TurnRow extends StatelessWidget {
           height: 30,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: isCit
-                ? const Color(0xFFFFF1DD)
-                : AppTheme.tealSoft,
-            border: Border.all(
-              color: isCit
-                  ? const Color(0xFFF1DDA7)
-                  : const Color(0xFFC9DCD5),
-            ),
+            color: avatarColor,
+            border: Border.all(color: avatarBorder),
           ),
           child: Center(
-            child: Text(isCit ? 'C' : 'AI',
+            child: Text(avatarLabel,
                 style: TextStyle(
                     fontSize: 10.5,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 0.04,
-                    color: isCit ? AppTheme.saffron2 : AppTheme.teal2)),
+                    color: avatarTextColor)),
           ),
         ),
         const SizedBox(width: 10),
@@ -1090,7 +1115,7 @@ class _TurnRow extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(children: [
-                Text(isCit ? 'Citizen' : 'AI Assistant',
+                Text(speakerLabel,
                     style: const TextStyle(
                         fontSize: 11,
                         letterSpacing: 0.08,
@@ -1415,6 +1440,81 @@ class _EditableFieldState extends State<_EditableField> {
                       ],
                     ),
                   ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Agent reply bar ──────────────────────────────────────────────────────────
+
+class _AgentReplyBar extends StatelessWidget {
+  final TextEditingController controller;
+  final VoidCallback onSend;
+  const _AgentReplyBar({required this.controller, required this.onSend});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: AppTheme.hair)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: controller,
+              style: const TextStyle(fontSize: 13.5, color: AppTheme.ink),
+              decoration: InputDecoration(
+                hintText: 'Reply to citizen…',
+                hintStyle:
+                    const TextStyle(fontSize: 13.5, color: AppTheme.muted),
+                isDense: true,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: AppTheme.hair),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: AppTheme.hair),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: AppTheme.teal),
+                ),
+              ),
+              onSubmitted: (_) => onSend(),
+            ),
+          ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: onSend,
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+              decoration: BoxDecoration(
+                color: AppTheme.teal,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.headset_mic_rounded,
+                      size: 14, color: Color(0xFFFFF7E5)),
+                  SizedBox(width: 6),
+                  Text('Send',
+                      style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFFFFF7E5))),
+                ],
+              ),
+            ),
           ),
         ],
       ),

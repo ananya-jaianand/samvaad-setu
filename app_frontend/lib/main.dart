@@ -38,9 +38,6 @@ class _AppShellState extends State<AppShell> {
   /// Values: 'mock', 'production', or '' while loading.
   String _backendMode = '';
 
-  /// Demo data toggle — seeds pre-built Karnataka 1092 sessions into the agent queue.
-  bool _demoDataEnabled = false;
-
   @override
   void initState() {
     super.initState();
@@ -74,10 +71,7 @@ class _AppShellState extends State<AppShell> {
           ),
           Expanded(
             child: _showAgent
-                ? AgentDashboard(
-                    demoDataEnabled: _demoDataEnabled,
-                    onDemoToggle: (v) => setState(() => _demoDataEnabled = v),
-                  )
+                ? const AgentDashboard()
                 : const CitizenView(),
           ),
         ],
@@ -124,7 +118,7 @@ class _TopNav extends StatelessWidget {
                         color: AppTheme.saffron,
                         boxShadow: [
                           BoxShadow(
-                            color: AppTheme.saffron.withOpacity(0.18),
+                            color: AppTheme.saffron.withValues(alpha: 0.18),
                             blurRadius: 0,
                             spreadRadius: 3,
                           ),

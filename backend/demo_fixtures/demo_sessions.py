@@ -180,7 +180,7 @@ def build_demo_sessions() -> list[SessionState]:
                 intent="pension_scheme",
                 intent_entropy=0.38,
                 sentiment=TurnSentiment(
-                    label="concerned", intensity=0.55,
+                    label="urgency", intensity=0.55,
                     text_component=0.58, prosodic_component=0.50,
                 ),
                 verification_state="pending",
@@ -201,10 +201,10 @@ def build_demo_sessions() -> list[SessionState]:
                 asr_confidence=0.72,
                 detected_language="hi",
                 sentiment=TurnSentiment(
-                    label="concerned", intensity=0.58,
+                    label="urgency", intensity=0.58,
                     text_component=0.55, prosodic_component=0.62,
                 ),
-                verification_state="partial",
+                verification_state="partially_correct",
             ),
             Turn(
                 turn_id="t4s3",
@@ -329,7 +329,7 @@ def build_demo_sessions() -> list[SessionState]:
                 intent="sanitation_garbage",
                 intent_entropy=0.28,
                 sentiment=TurnSentiment(
-                    label="concerned", intensity=0.52,
+                    label="calm", intensity=0.52,
                     text_component=0.55, prosodic_component=0.48,
                 ),
                 verification_state="pending",
@@ -350,7 +350,7 @@ def build_demo_sessions() -> list[SessionState]:
                 asr_confidence=0.87,
                 detected_language="kn",
                 sentiment=TurnSentiment(
-                    label="concerned", intensity=0.60,
+                    label="urgency", intensity=0.60,
                     text_component=0.62, prosodic_component=0.57,
                 ),
                 verification_state="correct",

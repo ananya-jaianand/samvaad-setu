@@ -24,6 +24,8 @@ from services.feedback_loop import write_verified_interaction, record_agent_corr
 from services.agent_queue import (
     push_escalation, remove_from_queue, get_queue, queue_length,
     register_agent, unregister_agent, broadcast_escalation, connected_agent_count,
+    push_active_session, remove_active_session,
+    register_citizen, unregister_citizen, send_to_citizen, broadcast_to_agents,
 )
 from services.intent_taxonomy import IntentTaxonomy
 
@@ -48,6 +50,31 @@ async def _startup():
         print("[STARTUP] DB tables ready")
     except Exception as exc:
         print(f"[STARTUP] DB init failed (non-fatal in mock mode): {exc}")
+
+    # Always seed demo sessions so the agent dashboard has data out-of-the-box
+    try:
+        from demo_fixtures.demo_sessions import build_demo_sessions, DEMO_QUEUE_ENTRIES
+        from datetime import timedelta
+
+        demo_sessions = build_demo_sessions()
+        for s in demo_sessions:
+            await session_manager.save_session(s)
+        for i, entry in enumerate(DEMO_QUEUE_ENTRIES):
+            created_at = datetime.now(timezone.utc) - timedelta(minutes=5 + i * 7)
+            await push_escalation(
+                session_id=entry["session_id"],
+                sentiment_intensity=entry["sentiment_intensity"],
+                sentiment=entry["sentiment"],
+                reason=entry["reason"],
+                summary=entry["summary"],
+                district=entry["district"],
+                language=entry["language"],
+                final_intent=entry["final_intent"],
+                created_at=created_at,
+            )
+        print(f"[STARTUP] Seeded {len(demo_sessions)} demo sessions into agent queue")
+    except Exception as exc:
+        print(f"[STARTUP] Demo seed failed (non-fatal): {exc}")
 
 app.add_middleware(LatencyMiddleware)
 app.add_middleware(
@@ -93,6 +120,30 @@ async def create_session(
 
     if idempotency_key:
         await session_manager.set_idempotency(idempotency_key, response)
+
+    # Register in the all-sessions map so it shows up in the agent queue immediately
+    push_active_session(
+        session_id=session.session_id,
+        district=district,
+        language=language,
+        summary="New call connected",
+        reason="active",
+    )
+    await broadcast_to_agents({
+        "type": "session_update",
+        "session": {
+            "session_id": session.session_id,
+            "district": district,
+            "language": language,
+            "sentiment": "calm",
+            "sentiment_intensity": 0.3,
+            "summary": "New call connected",
+            "reason": "active",
+            "final_intent": None,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "is_escalated": False,
+        },
+    })
 
     await log_event(
         session.session_id,
@@ -383,8 +434,11 @@ async def agent_ws(websocket: WebSocket, agent_id: str):
                 msg = json.loads(raw_msg)
             except json.JSONDecodeError:
                 continue
-            if msg.get("type") == "ping":
+            msg_type = msg.get("type")
+            if msg_type == "ping":
                 await websocket.send_json({"type": "pong"})
+            elif msg_type == "agent_reply":
+                await _handle_agent_ws_reply(msg)
     except WebSocketDisconnect:
         pass
     except Exception:
@@ -418,6 +472,8 @@ async def voice_pipeline(websocket: WebSocket, session_id: str):
         await websocket.send_json({"type": "error", "message": "Session not found"})
         await websocket.close()
         return
+
+    register_citizen(session_id, websocket)
 
     try:
         async for raw_msg in websocket.iter_text():
@@ -457,6 +513,9 @@ async def voice_pipeline(websocket: WebSocket, session_id: str):
         except Exception:
             pass
     finally:
+        unregister_citizen(session_id)
+        remove_active_session(session_id)
+        await broadcast_to_agents({"type": "session_ended", "session_id": session_id})
         await session_manager.save_session(session)
 
 
@@ -635,6 +694,37 @@ async def _handle_audio_turn(websocket: WebSocket, session: SessionState, msg: d
         "mock_mode": settings.environment == "mock",
     })
     print(f"[WS] turn_update sent successfully")
+
+    # Broadcast live turn to all connected agent dashboards
+    last_sent = session.sentiment_timeline[-1] if session.sentiment_timeline else {}
+    push_active_session(
+        session_id=session.session_id,
+        district=session.district,
+        language=session.detected_language,
+        sentiment=last_sent.get("label", "calm"),
+        sentiment_intensity=last_sent.get("intensity", 0.3),
+        summary=asr_result.transcript[:120],
+        reason="active",
+        final_intent=session.final_intent,
+        is_escalated=session.is_escalated,
+    )
+    await broadcast_to_agents({
+        "type": "session_live_update",
+        "session_id": session.session_id,
+        "citizen_turn": citizen_turn.model_dump(mode="json"),
+        "ai_turn": ai_turn.model_dump(mode="json"),
+        "session": {
+            "session_id": session.session_id,
+            "district": session.district,
+            "language": session.detected_language,
+            "sentiment": last_sent.get("label", "calm"),
+            "sentiment_intensity": last_sent.get("intensity", 0.3),
+            "summary": asr_result.transcript[:120],
+            "reason": "active",
+            "final_intent": session.final_intent,
+            "is_escalated": session.is_escalated,
+        },
+    })
 
     # Send dedicated verification_prompt so the UI can render the confirm/deny buttons
     await websocket.send_json({
@@ -816,6 +906,30 @@ async def _handle_agent_correction(websocket: WebSocket, session: SessionState, 
         "turn_id": turn_id,
         "session_id": session.session_id,
     })
+
+
+async def _handle_agent_ws_reply(msg: dict) -> None:
+    """Agent dashboard sends a voice reply to the citizen via agent WebSocket."""
+    session_id = msg.get("session_id", "")
+    text = msg.get("text", "").strip()
+    if not session_id or not text:
+        return
+
+    session = await session_manager.get_session(session_id)
+    language = session.detected_language if session else "en"
+
+    tts_audio = ""
+    try:
+        tts_audio = await tts.synthesize(text, language=language)
+    except Exception as exc:
+        print(f"[AGENT_REPLY] TTS failed: {exc}")
+
+    delivered = await send_to_citizen(session_id, {
+        "type": "agent_audio",
+        "text": text,
+        "tts_audio_b64": tts_audio,
+    })
+    print(f"[AGENT_REPLY] Delivered to citizen {session_id}: {delivered}")
 
 
 async def _do_escalation(websocket: WebSocket, session: SessionState, esc_decision, language: str):

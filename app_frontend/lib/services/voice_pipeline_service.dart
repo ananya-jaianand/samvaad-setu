@@ -168,6 +168,17 @@ class VoicePipelineService {
         }
         break;
 
+      case 'agent_audio':
+        final text = (data['text'] ?? '') as String;
+        if (text.isNotEmpty) {
+          _addTurn(SessionTurn(speaker: 'agent', rawTranscript: text));
+        }
+        if (data['tts_audio_b64'] != null &&
+            (data['tts_audio_b64'] as String).isNotEmpty) {
+          await _playAudio(data['tts_audio_b64'] as String);
+        }
+        break;
+
       case 'pong':
         break;
 
