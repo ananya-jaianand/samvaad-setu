@@ -1,0 +1,24 @@
+# LiveKit Agents Framework
+livekit-agents>=0.8.0
+livekit-plugins-anthropic>=0.6.0
+livekit-plugins-sarvam>=0.1.0
+
+# FastAPI Backend & WebSocket
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+websockets==12.0
+httpx==0.27.0
+python-multipart==0.0.9
+
+# API Clients
+anthropic==0.28.0
+google-generativeai==0.3.2
+
+# Data & Config
+redis==5.0.4
+python-dotenv==1.0.1
+pydantic==2.7.1
+pydantic-settings==2.2.1
+numpy==1.26.4
+aiofiles==23.2.1
+aiohttp>=3.9.0
