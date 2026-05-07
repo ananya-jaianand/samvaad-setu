@@ -1,8 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:fl_chart/fl_chart.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 import '../theme/app_theme.dart';
 import '../config/app_config.dart';
 
@@ -138,15 +141,27 @@ class _HourStat {
       );
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-Color _sentimentColor(double intensity) {
-  if (intensity < 0.36) return AppTheme.sage;
-  if (intensity < 0.56) return AppTheme.amber;
+Color _sentimentColor(double v) {
+  if (v < 0.36) return AppTheme.sage;
+  if (v < 0.56) return AppTheme.amber;
   return AppTheme.red;
 }
 
-// ─── Root widget ─────────────────────────────────────────────────────────────
+String _sentimentLabel(double v) {
+  if (v < 0.36) return 'Calm';
+  if (v < 0.56) return 'Concerned';
+  return 'Distress';
+}
+
+String _fmt2(int h) {
+  final period = h < 12 ? 'am' : 'pm';
+  final h12 = h == 0 ? 12 : (h > 12 ? h - 12 : h);
+  return '$h12$period';
+}
+
+// ─── Root widget ──────────────────────────────────────────────────────────────
 
 class AnalyticsDashboard extends StatefulWidget {
   const AnalyticsDashboard({super.key});
@@ -159,18 +174,24 @@ class _AnalyticsDashboardState extends State<AnalyticsDashboard> {
   _OverviewData? _data;
   bool _loading = true;
   String? _error;
+  DateTime? _lastUpdated;
+  Timer? _refreshTimer;
 
   @override
   void initState() {
     super.initState();
     _fetchData();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) => _fetchData());
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _fetchData() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+    setState(() { _loading = _data == null; });
     try {
       final res = await http
           .get(Uri.parse('${AppConfig.backendUrl}/analytics/overview'))
@@ -180,22 +201,13 @@ class _AnalyticsDashboardState extends State<AnalyticsDashboard> {
           _data = _OverviewData.fromJson(
               jsonDecode(res.body) as Map<String, dynamic>);
           _loading = false;
+          _lastUpdated = DateTime.now();
         });
       } else {
-        if (mounted) {
-          setState(() {
-            _error = 'Server returned ${res.statusCode}';
-            _loading = false;
-          });
-        }
+        if (mounted) setState(() { _error = 'Server returned ${res.statusCode}'; _loading = false; });
       }
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = e.toString();
-          _loading = false;
-        });
-      }
+      if (mounted) setState(() { _error = e.toString(); _loading = false; });
     }
   }
 
@@ -207,7 +219,7 @@ class _AnalyticsDashboardState extends State<AnalyticsDashboard> {
           ? const Center(child: CircularProgressIndicator())
           : _error != null
               ? _ErrorView(error: _error!, onRetry: _fetchData)
-              : _AnalyticsContent(data: _data!),
+              : _AnalyticsContent(data: _data!, lastUpdated: _lastUpdated),
     );
   }
 }
@@ -228,13 +240,9 @@ class _ErrorView extends StatelessWidget {
           const Icon(Icons.wifi_off_rounded, color: AppTheme.muted, size: 40),
           const SizedBox(height: 12),
           const Text('Could not load analytics',
-              style: TextStyle(
-                  color: AppTheme.ink,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 14)),
+              style: TextStyle(color: AppTheme.ink, fontWeight: FontWeight.w600, fontSize: 14)),
           const SizedBox(height: 4),
-          Text(error,
-              style: const TextStyle(color: AppTheme.muted, fontSize: 11)),
+          Text(error, style: const TextStyle(color: AppTheme.muted, fontSize: 11)),
           const SizedBox(height: 16),
           OutlinedButton(onPressed: onRetry, child: const Text('Retry')),
         ],
@@ -269,15 +277,10 @@ class _Panel extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(title,
-                    style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: AppTheme.ink)),
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.ink)),
                 if (subtitle != null) ...[
                   const SizedBox(height: 2),
-                  Text(subtitle!,
-                      style: const TextStyle(
-                          fontSize: 10, color: AppTheme.muted)),
+                  Text(subtitle!, style: const TextStyle(fontSize: 10, color: AppTheme.muted)),
                 ],
               ],
             ),
@@ -293,13 +296,19 @@ class _Panel extends StatelessWidget {
 
 class _AnalyticsContent extends StatelessWidget {
   final _OverviewData data;
-  const _AnalyticsContent({required this.data});
+  final DateTime? lastUpdated;
+  const _AnalyticsContent({required this.data, this.lastUpdated});
 
   @override
   Widget build(BuildContext context) {
-    final escalationPct = data.totalCalls > 0
-        ? (data.escalatedCalls / data.totalCalls * 100).round()
-        : 0;
+    final escalationPct =
+        data.totalCalls > 0 ? (data.escalatedCalls / data.totalCalls * 100).round() : 0;
+    final resolutionPct =
+        data.totalCalls > 0 ? ((data.totalCalls - data.escalatedCalls) / data.totalCalls * 100).round() : 0;
+
+    final updatedStr = lastUpdated != null
+        ? 'Updated ${lastUpdated!.hour.toString().padLeft(2, '0')}:${lastUpdated!.minute.toString().padLeft(2, '0')}'
+        : '';
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
@@ -310,24 +319,26 @@ class _AnalyticsContent extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Regional Analytics',
-                    style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                        color: AppTheme.ink),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    'Karnataka 1092 Helpline · ${data.totalCalls} calls · live overview',
-                    style: const TextStyle(
-                        fontSize: 11, color: AppTheme.muted),
-                  ),
-                ],
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Regional Analytics',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: AppTheme.ink)),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Karnataka 1092 Helpline · ${data.totalCalls} calls today',
+                      style: const TextStyle(fontSize: 11, color: AppTheme.muted),
+                    ),
+                  ],
+                ),
               ),
+              if (updatedStr.isNotEmpty)
+                Row(children: [
+                  Container(width: 6, height: 6, decoration: const BoxDecoration(color: AppTheme.sage, shape: BoxShape.circle)),
+                  const SizedBox(width: 5),
+                  Text(updatedStr, style: const TextStyle(fontSize: 10, color: AppTheme.muted)),
+                ]),
             ],
           ),
           const SizedBox(height: 16),
@@ -342,7 +353,7 @@ class _AnalyticsContent extends StatelessWidget {
                 icon: Icons.phone_in_talk_rounded,
                 iconColor: AppTheme.teal,
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
               _StatCard(
                 label: 'Escalated',
                 value: '$escalationPct%',
@@ -350,15 +361,23 @@ class _AnalyticsContent extends StatelessWidget {
                 icon: Icons.warning_amber_rounded,
                 iconColor: AppTheme.red,
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
+              _StatCard(
+                label: 'Resolved',
+                value: '$resolutionPct%',
+                sub: 'without escalation',
+                icon: Icons.check_circle_outline_rounded,
+                iconColor: AppTheme.sage,
+              ),
+              const SizedBox(width: 10),
               _StatCard(
                 label: 'Avg Confidence',
                 value: '${(data.avgConfidence * 100).round()}%',
                 sub: 'pipeline score',
                 icon: Icons.analytics_outlined,
-                iconColor: AppTheme.sage,
+                iconColor: AppTheme.teal,
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
               _StatCard(
                 label: 'Avg Distress',
                 value: '${(data.avgSentimentIntensity * 100).round()}%',
@@ -368,7 +387,10 @@ class _AnalyticsContent extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
+
+          // ── Hotspot alerts ───────────────────────────────────────────────
+          _HotspotAlertsStrip(districts: data.byDistrict),
 
           // ── Map + District bar ───────────────────────────────────────────
           IntrinsicHeight(
@@ -394,21 +416,11 @@ class _AnalyticsContent extends StatelessWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Expanded(
-                  flex: 4,
-                  child: _IntentPieCard(intents: data.intentDistribution),
-                ),
+                Expanded(flex: 4, child: _IntentPieCard(intents: data.intentDistribution)),
                 const SizedBox(width: 14),
-                Expanded(
-                  flex: 4,
-                  child: _EscalationReasonsCard(
-                      reasons: data.escalationReasons),
-                ),
+                Expanded(flex: 4, child: _EscalationReasonsCard(reasons: data.escalationReasons)),
                 const SizedBox(width: 14),
-                Expanded(
-                  flex: 4,
-                  child: _LanguageCard(languages: data.languageDistribution),
-                ),
+                Expanded(flex: 4, child: _LanguageCard(languages: data.languageDistribution)),
               ],
             ),
           ),
@@ -444,7 +456,7 @@ class _StatCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Expanded(
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
         decoration: BoxDecoration(
           color: Colors.white,
           border: Border.all(color: AppTheme.hair),
@@ -453,34 +465,31 @@ class _StatCard extends StatelessWidget {
         child: Row(
           children: [
             Container(
-              width: 36,
-              height: 36,
+              width: 34,
+              height: 34,
               decoration: BoxDecoration(
                 color: iconColor.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Icon(icon, color: iconColor, size: 18),
+              child: Icon(icon, color: iconColor, size: 17),
             ),
-            const SizedBox(width: 12),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(value,
-                    style: const TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w700,
-                        color: AppTheme.ink)),
-                const SizedBox(height: 1),
-                Text(label,
-                    style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
-                        color: AppTheme.muted)),
-                Text(sub,
-                    style: TextStyle(
-                        fontSize: 10,
-                        color: AppTheme.muted.withValues(alpha: 0.7))),
-              ],
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(value,
+                      style: const TextStyle(
+                          fontSize: 20, fontWeight: FontWeight.w700, color: AppTheme.ink)),
+                  const SizedBox(height: 1),
+                  Text(label,
+                      style: const TextStyle(
+                          fontSize: 10, fontWeight: FontWeight.w500, color: AppTheme.muted)),
+                  Text(sub,
+                      style: TextStyle(
+                          fontSize: 9, color: AppTheme.muted.withValues(alpha: 0.7))),
+                ],
+              ),
             ),
           ],
         ),
@@ -489,20 +498,95 @@ class _StatCard extends StatelessWidget {
   }
 }
 
-// ─── Karnataka map ────────────────────────────────────────────────────────────
+// ─── Hotspot alerts strip ─────────────────────────────────────────────────────
 
-class _KarnatakaMapCard extends StatelessWidget {
+class _HotspotAlertsStrip extends StatelessWidget {
+  final List<_DistrictStat> districts;
+  const _HotspotAlertsStrip({required this.districts});
+
+  @override
+  Widget build(BuildContext context) {
+    final hotspots = [...districts.where((d) => d.avgSentiment > 0.55)]
+      ..sort((a, b) => b.avgSentiment.compareTo(a.avgSentiment));
+
+    if (hotspots.isEmpty) return const SizedBox();
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppTheme.red.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppTheme.red.withValues(alpha: 0.2)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.warning_amber_rounded, color: AppTheme.red, size: 15),
+          const SizedBox(width: 8),
+          Text(
+            '${hotspots.length} distress ${hotspots.length == 1 ? 'hotspot' : 'hotspots'} — needs attention',
+            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppTheme.red),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: hotspots.map((d) {
+                  final escPct = d.calls > 0 ? (d.escalated / d.calls * 100).round() : 0;
+                  return Container(
+                    margin: const EdgeInsets.only(right: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: AppTheme.red.withValues(alpha: 0.3)),
+                    ),
+                    child: Row(children: [
+                      Text(d.label,
+                          style: const TextStyle(
+                              fontSize: 10, fontWeight: FontWeight.w500, color: AppTheme.ink)),
+                      const SizedBox(width: 5),
+                      Text('${d.calls} calls · $escPct% esc.',
+                          style: const TextStyle(fontSize: 10, color: AppTheme.red)),
+                    ]),
+                  );
+                }).toList(),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Karnataka map (real OSM via flutter_map) ─────────────────────────────────
+
+class _KarnatakaMapCard extends StatefulWidget {
   final List<_DistrictStat> districts;
   const _KarnatakaMapCard({required this.districts});
 
   @override
-  Widget build(BuildContext context) {
-    final maxCalls =
-        districts.map((d) => d.calls).fold(0, (a, b) => a > b ? a : b);
+  State<_KarnatakaMapCard> createState() => _KarnatakaMapCardState();
+}
 
+class _KarnatakaMapCardState extends State<_KarnatakaMapCard> {
+  _DistrictStat? _selected;
+
+  int get _maxCalls =>
+      widget.districts.map((d) => d.calls).fold(0, (a, b) => a > b ? a : b);
+
+  double _markerSize(_DistrictStat d) {
+    final max = _maxCalls > 0 ? _maxCalls.toDouble() : 1.0;
+    return 20.0 + (d.calls / max) * 30.0;
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return _Panel(
       title: 'District Activity Map',
-      subtitle: 'Karnataka — circle size = call volume · colour = distress',
+      subtitle: 'OpenStreetMap · tap a district · size = call volume · colour = distress',
       child: Column(
         children: [
           const SizedBox(height: 10),
@@ -510,22 +594,88 @@ class _KarnatakaMapCard extends StatelessWidget {
             margin: const EdgeInsets.symmetric(horizontal: 16),
             height: 360,
             decoration: BoxDecoration(
-              color: const Color(0xFFF2EEE4),
               borderRadius: BorderRadius.circular(8),
               border: Border.all(color: AppTheme.hair),
             ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(8),
-              child: CustomPaint(
-                painter: _KarnatakaMapPainter(
-                    districts: districts, maxCalls: maxCalls),
-                child: const SizedBox.expand(),
+              child: FlutterMap(
+                options: MapOptions(
+                  initialCenter: const LatLng(14.5, 75.8),
+                  initialZoom: 6.5,
+                  minZoom: 5.5,
+                  maxZoom: 10.0,
+                  onTap: (_, __) => setState(() => _selected = null),
+                ),
+                children: [
+                  TileLayer(
+                    urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                    userAgentPackageName: 'com.samvaad.setu',
+                  ),
+                  MarkerLayer(
+                    markers: widget.districts.map((d) {
+                      final size = _markerSize(d);
+                      final color = _sentimentColor(d.avgSentiment);
+                      final isSelected = _selected?.id == d.id;
+                      final mSize = size + (isSelected ? 10 : 0);
+                      return Marker(
+                        point: LatLng(d.lat, d.lng),
+                        width: mSize,
+                        height: mSize,
+                        child: GestureDetector(
+                          onTap: () => setState(() {
+                            _selected = isSelected ? null : d;
+                          }),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 180),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: color.withValues(alpha: 0.72),
+                              border: Border.all(
+                                color: isSelected ? AppTheme.ink : color,
+                                width: isSelected ? 2.5 : 1.5,
+                              ),
+                              boxShadow: isSelected
+                                  ? [BoxShadow(
+                                      color: color.withValues(alpha: 0.45),
+                                      blurRadius: 10,
+                                      spreadRadius: 3,
+                                    )]
+                                  : [BoxShadow(
+                                      color: color.withValues(alpha: 0.2),
+                                      blurRadius: 4,
+                                    )],
+                            ),
+                            child: d.calls >= 8
+                                ? Center(
+                                    child: Text(
+                                      '${d.calls}',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 8,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                  )
+                                : null,
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  const RichAttributionWidget(
+                    attributions: [
+                      TextSourceAttribution('OpenStreetMap contributors'),
+                    ],
+                  ),
+                ],
               ),
             ),
           ),
+
           // Legend
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, _kLegendBottom),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -535,31 +685,159 @@ class _KarnatakaMapCard extends StatelessWidget {
                 const SizedBox(width: 18),
                 const _LegendItem(color: AppTheme.red, label: 'Distress'),
                 const SizedBox(width: 18),
-                Row(
-                  children: [
-                    Container(
-                      width: 14,
-                      height: 14,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: Colors.transparent,
-                        border: Border.all(
-                            color: AppTheme.muted.withValues(alpha: 0.5)),
-                      ),
+                Row(children: [
+                  Container(
+                    width: 14,
+                    height: 14,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border:
+                          Border.all(color: AppTheme.muted.withValues(alpha: 0.5)),
                     ),
-                    const SizedBox(width: 4),
-                    const Text('size = call volume',
-                        style: TextStyle(fontSize: 10, color: AppTheme.muted)),
-                  ],
-                ),
+                  ),
+                  const SizedBox(width: 4),
+                  const Text('size = call volume',
+                      style: TextStyle(fontSize: 10, color: AppTheme.muted)),
+                ]),
               ],
             ),
+          ),
+
+          // District detail panel (shown on tap)
+          AnimatedSize(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOut,
+            child: _selected != null
+                ? _DistrictDetailPanel(
+                    district: _selected!,
+                    onClose: () => setState(() => _selected = null),
+                  )
+                : const SizedBox(width: double.infinity),
+          ),
+          const SizedBox(height: 14),
+        ],
+      ),
+    );
+  }
+}
+
+const double _kLegendBottom = 10;
+
+// ─── District detail panel ────────────────────────────────────────────────────
+
+class _DistrictDetailPanel extends StatelessWidget {
+  final _DistrictStat district;
+  final VoidCallback onClose;
+  const _DistrictDetailPanel({required this.district, required this.onClose});
+
+  @override
+  Widget build(BuildContext context) {
+    final escPct =
+        district.calls > 0 ? (district.escalated / district.calls * 100).round() : 0;
+    final resolvedPct =
+        district.calls > 0 ? ((district.calls - district.escalated) / district.calls * 100).round() : 0;
+    final sentColor = _sentimentColor(district.avgSentiment);
+    final sentLabel = _sentimentLabel(district.avgSentiment);
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+      padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+      decoration: BoxDecoration(
+        color: AppTheme.agentBg,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppTheme.hair),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 4,
+            height: 52,
+            margin: const EdgeInsets.only(right: 12),
+            decoration: BoxDecoration(
+              color: sentColor,
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(district.label,
+                    style: const TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.ink)),
+                const SizedBox(height: 8),
+                Row(children: [
+                  _MiniStat(label: 'Calls', value: '${district.calls}'),
+                  const SizedBox(width: 20),
+                  _MiniStat(label: 'Escalated', value: '$escPct%'),
+                  const SizedBox(width: 20),
+                  _MiniStat(label: 'Resolved', value: '$resolvedPct%'),
+                  const SizedBox(width: 20),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Sentiment',
+                          style: TextStyle(fontSize: 9, color: AppTheme.muted)),
+                      Row(children: [
+                        Container(
+                          width: 7, height: 7, margin: const EdgeInsets.only(right: 4),
+                          decoration: BoxDecoration(color: sentColor, shape: BoxShape.circle),
+                        ),
+                        Text(sentLabel,
+                            style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: sentColor)),
+                      ]),
+                    ],
+                  ),
+                  if (district.primaryIntent != null) ...[
+                    const SizedBox(width: 20),
+                    _MiniStat(
+                        label: 'Top Intent',
+                        value: district.primaryIntent!
+                            .replaceAll('_', ' ')
+                            .split(' ')
+                            .map((w) => w[0].toUpperCase() + w.substring(1))
+                            .join(' ')),
+                  ],
+                ]),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close_rounded, size: 15, color: AppTheme.muted),
+            onPressed: onClose,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
           ),
         ],
       ),
     );
   }
 }
+
+class _MiniStat extends StatelessWidget {
+  final String label;
+  final String value;
+  const _MiniStat({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(fontSize: 9, color: AppTheme.muted)),
+        Text(value,
+            style: const TextStyle(
+                fontSize: 12, fontWeight: FontWeight.w600, color: AppTheme.ink)),
+      ],
+    );
+  }
+}
+
+// ─── Legend item ──────────────────────────────────────────────────────────────
 
 class _LegendItem extends StatelessWidget {
   final Color color;
@@ -571,155 +849,17 @@ class _LegendItem extends StatelessWidget {
     return Row(
       children: [
         Container(
-          width: 9,
-          height: 9,
+          width: 9, height: 9,
           decoration: BoxDecoration(color: color, shape: BoxShape.circle),
         ),
         const SizedBox(width: 4),
-        Text(label,
-            style: const TextStyle(fontSize: 10, color: AppTheme.muted)),
+        Text(label, style: const TextStyle(fontSize: 10, color: AppTheme.muted)),
       ],
     );
   }
 }
 
-// ─── Map painter ──────────────────────────────────────────────────────────────
-
-class _KarnatakaMapPainter extends CustomPainter {
-  final List<_DistrictStat> districts;
-  final int maxCalls;
-
-  const _KarnatakaMapPainter({required this.districts, required this.maxCalls});
-
-  // Karnataka bounding box
-  static const double _latMin = 11.4;
-  static const double _latMax = 18.6;
-  static const double _lngMin = 73.8;
-  static const double _lngMax = 78.6;
-
-  Offset _geo(double lat, double lng, Size size) {
-    const padX = 0.07;
-    const padY = 0.06;
-    final nx = padX + (lng - _lngMin) / (_lngMax - _lngMin) * (1 - padX * 2);
-    final ny = padY +
-        (1 - (lat - _latMin) / (_latMax - _latMin)) * (1 - padY * 2);
-    return Offset(nx * size.width, ny * size.height);
-  }
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    // Subtle grid
-    final gridPaint = Paint()
-      ..color = const Color(0xFFDDD8CC)
-      ..strokeWidth = 0.6;
-    for (double lat = 12; lat <= 18; lat++) {
-      final p = _geo(lat, _lngMin, size);
-      canvas.drawLine(Offset(0, p.dy), Offset(size.width, p.dy), gridPaint);
-    }
-    for (double lng = 74; lng <= 78; lng++) {
-      final p = _geo(_latMin, lng, size);
-      canvas.drawLine(Offset(p.dx, 0), Offset(p.dx, size.height), gridPaint);
-    }
-
-    // Dots
-    for (final d in districts) {
-      final pos = _geo(d.lat, d.lng, size);
-      final maxR = maxCalls > 0 ? maxCalls.toDouble() : 1;
-      final radius = 5.0 + (d.calls / maxR) * 16.0;
-      final color = _sentimentColor(d.avgSentiment);
-
-      // Glow for high distress
-      if (d.avgSentiment > 0.55) {
-        canvas.drawCircle(
-          pos,
-          radius + 5,
-          Paint()
-            ..color = color.withValues(alpha: 0.15)
-            ..maskFilter =
-                const MaskFilter.blur(BlurStyle.normal, 7),
-        );
-      }
-
-      // Fill
-      canvas.drawCircle(
-          pos, radius, Paint()..color = color.withValues(alpha: 0.75));
-
-      // Border ring
-      canvas.drawCircle(
-          pos,
-          radius,
-          Paint()
-            ..color = color
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 1.5);
-
-      // Label for high-volume districts
-      if (d.calls >= 5) {
-        final shortName = d.label.split(' ').first;
-        final tp = TextPainter(
-          text: TextSpan(
-            text: shortName,
-            style: TextStyle(
-              color: AppTheme.ink.withValues(alpha: 0.85),
-              fontSize: 8.5,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          textDirection: TextDirection.ltr,
-        )..layout();
-        tp.paint(canvas,
-            Offset(pos.dx - tp.width / 2, pos.dy + radius + 2.5));
-      }
-
-      // Call count badge for top districts
-      if (d.calls >= 9) {
-        final badge = TextPainter(
-          text: TextSpan(
-            text: '${d.calls}',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 8,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          textDirection: TextDirection.ltr,
-        )..layout();
-        badge.paint(canvas,
-            Offset(pos.dx - badge.width / 2, pos.dy - badge.height / 2));
-      }
-    }
-
-    // Compass rose (bottom-right corner)
-    _drawCompass(canvas, Offset(size.width - 22, size.height - 22));
-  }
-
-  void _drawCompass(Canvas canvas, Offset center) {
-    final paint = Paint()
-      ..color = const Color(0xFFADA89A)
-      ..strokeWidth = 1.2
-      ..style = PaintingStyle.stroke;
-    const r = 9.0;
-    canvas.drawCircle(center, r, paint);
-    // N arrow
-    canvas.drawLine(center, center.translate(0, -r + 2), paint);
-    final tp = TextPainter(
-      text: const TextSpan(
-          text: 'N',
-          style: TextStyle(
-              color: Color(0xFF9C9786),
-              fontSize: 7,
-              fontWeight: FontWeight.w700)),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    tp.paint(canvas, center.translate(-tp.width / 2, -r - tp.height + 1));
-  }
-
-  @override
-  bool shouldRepaint(_KarnatakaMapPainter old) =>
-      old.districts != districts || old.maxCalls != maxCalls;
-}
-
-// ─── District bar chart ───────────────────────────────────────────────────────
+// ─── District bar chart (stacked: resolved + escalated) ───────────────────────
 
 class _DistrictBarCard extends StatelessWidget {
   final List<_DistrictStat> districts;
@@ -727,15 +867,14 @@ class _DistrictBarCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final sorted = [...districts]
-      ..sort((a, b) => b.calls.compareTo(a.calls));
+    final sorted = [...districts]..sort((a, b) => b.calls.compareTo(a.calls));
     final top = sorted.take(10).toList();
     if (top.isEmpty) return const SizedBox();
     final maxY = top.first.calls.toDouble() * 1.25;
 
     return _Panel(
       title: 'Calls by District',
-      subtitle: 'Top 10 · colour = avg distress',
+      subtitle: 'Top 10 · bar = resolved (teal) + escalated (red)',
       child: Padding(
         padding: const EdgeInsets.fromLTRB(4, 16, 16, 8),
         child: SizedBox(
@@ -746,15 +885,26 @@ class _DistrictBarCard extends StatelessWidget {
               maxY: maxY,
               barGroups: top.asMap().entries.map((e) {
                 final d = e.value;
+                final resolved = (d.calls - d.escalated).toDouble();
+                final escalated = d.escalated.toDouble();
+                final sentColor = _sentimentColor(d.avgSentiment);
                 return BarChartGroupData(
                   x: e.key,
                   barRods: [
                     BarChartRodData(
                       toY: d.calls.toDouble(),
-                      color: _sentimentColor(d.avgSentiment),
                       width: 18,
-                      borderRadius: const BorderRadius.vertical(
-                          top: Radius.circular(4)),
+                      borderRadius:
+                          const BorderRadius.vertical(top: Radius.circular(4)),
+                      rodStackItems: [
+                        BarChartRodStackItem(
+                            0, escalated, AppTheme.red.withValues(alpha: 0.78)),
+                        BarChartRodStackItem(
+                            escalated,
+                            escalated + resolved,
+                            sentColor.withValues(alpha: 0.68)),
+                      ],
+                      color: Colors.transparent,
                     ),
                   ],
                 );
@@ -766,18 +916,13 @@ class _DistrictBarCard extends StatelessWidget {
                     reservedSize: 64,
                     getTitlesWidget: (value, meta) {
                       final idx = value.toInt();
-                      if (idx < 0 || idx >= top.length) {
-                        return const SizedBox();
-                      }
+                      if (idx < 0 || idx >= top.length) return const SizedBox();
                       return Padding(
                         padding: const EdgeInsets.only(top: 4),
                         child: RotatedBox(
                           quarterTurns: 1,
-                          child: Text(
-                            top[idx].label,
-                            style: const TextStyle(
-                                fontSize: 9, color: AppTheme.muted),
-                          ),
+                          child: Text(top[idx].label,
+                              style: const TextStyle(fontSize: 9, color: AppTheme.muted)),
                         ),
                       );
                     },
@@ -790,15 +935,14 @@ class _DistrictBarCard extends StatelessWidget {
                     interval: math.max(1, (maxY / 5).roundToDouble()),
                     getTitlesWidget: (value, meta) => Text(
                       '${value.toInt()}',
-                      style: const TextStyle(
-                          fontSize: 9, color: AppTheme.muted),
+                      style: const TextStyle(fontSize: 9, color: AppTheme.muted),
                     ),
                   ),
                 ),
-                topTitles: const AxisTitles(
-                    sideTitles: SideTitles(showTitles: false)),
-                rightTitles: const AxisTitles(
-                    sideTitles: SideTitles(showTitles: false)),
+                topTitles:
+                    const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                rightTitles:
+                    const AxisTitles(sideTitles: SideTitles(showTitles: false)),
               ),
               gridData: FlGridData(
                 show: true,
@@ -861,8 +1005,7 @@ class _IntentPieCardState extends State<_IntentPieCard> {
                     touchCallback: (event, response) {
                       setState(() {
                         _touched =
-                            response?.touchedSection?.touchedSectionIndex ??
-                                -1;
+                            response?.touchedSection?.touchedSectionIndex ?? -1;
                       });
                     },
                   ),
@@ -878,9 +1021,7 @@ class _IntentPieCardState extends State<_IntentPieCard> {
                           ? '${(e.value.count / math.max(1, total) * 100).round()}%'
                           : '',
                       titleStyle: const TextStyle(
-                          fontSize: 10,
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700),
+                          fontSize: 10, color: Colors.white, fontWeight: FontWeight.w700),
                     );
                   }).toList(),
                 ),
@@ -892,16 +1033,13 @@ class _IntentPieCardState extends State<_IntentPieCard> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: top.asMap().entries.map((e) {
-                  final pct = total > 0
-                      ? (e.value.count / total * 100).round()
-                      : 0;
+                  final pct = total > 0 ? (e.value.count / total * 100).round() : 0;
                   return Padding(
                     padding: const EdgeInsets.symmetric(vertical: 3),
                     child: Row(
                       children: [
                         Container(
-                          width: 8,
-                          height: 8,
+                          width: 8, height: 8,
                           decoration: BoxDecoration(
                             color: _colors[e.key % _colors.length],
                             shape: BoxShape.circle,
@@ -910,16 +1048,13 @@ class _IntentPieCardState extends State<_IntentPieCard> {
                         const SizedBox(width: 6),
                         Expanded(
                           child: Text(e.value.label,
-                              style: const TextStyle(
-                                  fontSize: 10, color: AppTheme.muted),
+                              style: const TextStyle(fontSize: 10, color: AppTheme.muted),
                               overflow: TextOverflow.ellipsis),
                         ),
                         const SizedBox(width: 4),
                         Text('$pct%',
                             style: const TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600,
-                                color: AppTheme.ink)),
+                                fontSize: 10, fontWeight: FontWeight.w600, color: AppTheme.ink)),
                       ],
                     ),
                   );
@@ -950,8 +1085,7 @@ class _EscalationReasonsCardState extends State<_EscalationReasonsCard> {
 
   @override
   Widget build(BuildContext context) {
-    final total =
-        widget.reasons.fold<int>(0, (s, r) => s + r.count);
+    final total = widget.reasons.fold<int>(0, (s, r) => s + r.count);
 
     return _Panel(
       title: 'Escalation Triggers',
@@ -969,8 +1103,7 @@ class _EscalationReasonsCardState extends State<_EscalationReasonsCard> {
                     touchCallback: (event, response) {
                       setState(() {
                         _touched =
-                            response?.touchedSection?.touchedSectionIndex ??
-                                -1;
+                            response?.touchedSection?.touchedSectionIndex ?? -1;
                       });
                     },
                   ),
@@ -986,9 +1119,7 @@ class _EscalationReasonsCardState extends State<_EscalationReasonsCard> {
                           ? '${(e.value.count / math.max(1, total) * 100).round()}%'
                           : '',
                       titleStyle: const TextStyle(
-                          fontSize: 10,
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700),
+                          fontSize: 10, color: Colors.white, fontWeight: FontWeight.w700),
                     );
                   }).toList(),
                 ),
@@ -1000,9 +1131,7 @@ class _EscalationReasonsCardState extends State<_EscalationReasonsCard> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: widget.reasons.asMap().entries.map((e) {
-                  final pct = total > 0
-                      ? (e.value.count / total * 100).round()
-                      : 0;
+                  final pct = total > 0 ? (e.value.count / total * 100).round() : 0;
                   return Padding(
                     padding: const EdgeInsets.symmetric(vertical: 5),
                     child: Column(
@@ -1011,8 +1140,7 @@ class _EscalationReasonsCardState extends State<_EscalationReasonsCard> {
                         Row(
                           children: [
                             Container(
-                              width: 8,
-                              height: 8,
+                              width: 8, height: 8,
                               decoration: BoxDecoration(
                                 color: _colors[e.key % _colors.length],
                                 shape: BoxShape.circle,
@@ -1021,8 +1149,7 @@ class _EscalationReasonsCardState extends State<_EscalationReasonsCard> {
                             const SizedBox(width: 6),
                             Expanded(
                               child: Text(e.value.label,
-                                  style: const TextStyle(
-                                      fontSize: 10, color: AppTheme.muted),
+                                  style: const TextStyle(fontSize: 10, color: AppTheme.muted),
                                   overflow: TextOverflow.ellipsis),
                             ),
                           ],
@@ -1035,9 +1162,7 @@ class _EscalationReasonsCardState extends State<_EscalationReasonsCard> {
                               child: ClipRRect(
                                 borderRadius: BorderRadius.circular(3),
                                 child: LinearProgressIndicator(
-                                  value: total > 0
-                                      ? e.value.count / total
-                                      : 0,
+                                  value: total > 0 ? e.value.count / total : 0,
                                   backgroundColor: AppTheme.hair,
                                   color: _colors[e.key % _colors.length],
                                   minHeight: 5,
@@ -1099,15 +1224,10 @@ class _LanguageCard extends StatelessWidget {
                     children: [
                       Text(lang.label,
                           style: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                              color: AppTheme.ink)),
+                              fontSize: 12, fontWeight: FontWeight.w500, color: AppTheme.ink)),
                       const Spacer(),
-                      Text(
-                        '${lang.count} · ${(pct * 100).round()}%',
-                        style: const TextStyle(
-                            fontSize: 11, color: AppTheme.muted),
-                      ),
+                      Text('${lang.count} · ${(pct * 100).round()}%',
+                          style: const TextStyle(fontSize: 11, color: AppTheme.muted)),
                     ],
                   ),
                   const SizedBox(height: 6),
@@ -1140,8 +1260,7 @@ class _HourlyTrendCard extends StatelessWidget {
   Widget build(BuildContext context) {
     if (trend.isEmpty) return const SizedBox();
     final maxY =
-        trend.map((t) => t.calls).fold(0, (a, b) => a > b ? a : b).toDouble() *
-            1.3;
+        trend.map((t) => t.calls).fold(0, (a, b) => a > b ? a : b).toDouble() * 1.3;
 
     return _Panel(
       title: 'Hourly Call Volume',
@@ -1155,8 +1274,7 @@ class _HourlyTrendCard extends StatelessWidget {
               lineBarsData: [
                 LineChartBarData(
                   spots: trend
-                      .map((t) =>
-                          FlSpot(t.hour.toDouble(), t.calls.toDouble()))
+                      .map((t) => FlSpot(t.hour.toDouble(), t.calls.toDouble()))
                       .toList(),
                   isCurved: true,
                   color: AppTheme.teal,
@@ -1169,8 +1287,7 @@ class _HourlyTrendCard extends StatelessWidget {
                 ),
                 LineChartBarData(
                   spots: trend
-                      .map((t) =>
-                          FlSpot(t.hour.toDouble(), t.escalated.toDouble()))
+                      .map((t) => FlSpot(t.hour.toDouble(), t.escalated.toDouble()))
                       .toList(),
                   isCurved: true,
                   color: AppTheme.red,
@@ -1186,17 +1303,10 @@ class _HourlyTrendCard extends StatelessWidget {
                     reservedSize: 22,
                     interval: 2,
                     getTitlesWidget: (value, meta) {
-                      final h = value.toInt();
-                      final label = h < 12
-                          ? '${h}am'
-                          : h == 12
-                              ? '12pm'
-                              : '${h - 12}pm';
                       return Padding(
                         padding: const EdgeInsets.only(top: 4),
-                        child: Text(label,
-                            style: const TextStyle(
-                                fontSize: 9, color: AppTheme.muted)),
+                        child: Text(_fmt2(value.toInt()),
+                            style: const TextStyle(fontSize: 9, color: AppTheme.muted)),
                       );
                     },
                   ),
@@ -1208,15 +1318,14 @@ class _HourlyTrendCard extends StatelessWidget {
                     interval: 4,
                     getTitlesWidget: (value, meta) => Text(
                       '${value.toInt()}',
-                      style: const TextStyle(
-                          fontSize: 9, color: AppTheme.muted),
+                      style: const TextStyle(fontSize: 9, color: AppTheme.muted),
                     ),
                   ),
                 ),
-                topTitles: const AxisTitles(
-                    sideTitles: SideTitles(showTitles: false)),
-                rightTitles: const AxisTitles(
-                    sideTitles: SideTitles(showTitles: false)),
+                topTitles:
+                    const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                rightTitles:
+                    const AxisTitles(sideTitles: SideTitles(showTitles: false)),
               ),
               gridData: FlGridData(
                 show: true,

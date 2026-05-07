@@ -1,792 +1,310 @@
-# Samvaad-Setu 🗣️
+# Samvaad-Setu
 
 **Multilingual Voice Assistant for Karnataka's 1092 Citizen Helpline**
 
-A real-time voice-based grievance management system supporting Kannada, Hindi, and English with AI-powered intent extraction, sentiment analysis, and intelligent escalation.
+---
+
+## The Problem
+
+Karnataka's 1092 helpline serves millions of citizens across 31 districts — speaking Kannada, Hindi, English, and a dozen regional dialects. When a distressed Mangaluru resident calls about a water supply failure, three things have to happen correctly and quickly: the system must *hear* them accurately, *understand* what they mean (not just what they said), and *confirm* it before taking any action.
+
+Today, that handoff fails constantly. Dialect mismatches produce wrong intents. Low ASR confidence goes undetected. Agents receive escalation packets with no context. There is no audit trail, no feedback loop, and no way to tell if the system actually helped.
+
+Samvaad-Setu is a real-time voice pipeline designed around a single constraint: **correct understanding before action.** Every component — the verification loop, the confidence scorer, the dialect-aware NLU — exists to enforce that constraint.
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
+```mermaid
+flowchart TD
+    A[Citizen Voice Input] -->|Base64 WAV / WebSocket| B[FastAPI Backend]
+    B --> C[Sarvam AI ASR]
+    C -->|transcript + per-token confidence| D[Prosodic Feature Extraction\nlibrosa]
+    D --> E[Dialect-Aware NLU\nGoogle Gemini]
+    E --> F[Multi-Modal Sentiment\ntext + prosodic fusion]
+    F --> G[Verification Engine\nrestate → 3-state confirm]
+    G -->|confirmed| H[Confidence Scorer\nASR + entropy + sentiment + clarification]
+    G -->|partial / incorrect| E
+    H --> I{Escalation Engine}
+    I -->|confidence OK| J[TTS Response\nSarvam AI]
+    I -->|low confidence / distress| K[Agent Dashboard\nhandoff packet]
+    J -->|audio stream| A
+    K --> L[Human Agent]
+
+    subgraph Persistence
+        M[(Redis\nephemeral sessions)]
+        N[(PostgreSQL\naudit trail + feedback)]
+    end
+
+    B <--> M
+    B --> N
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Flutter Frontend (Web/Mobile)             │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│  │ Voice Input  │  │ Live Chat UI │  │ Agent Panel  │      │
-│  └──────────────┘  └──────────────┘  └──────────────┘      │
-└─────────────────────────────────────────────────────────────┘
-                            │ WebSocket
-                            ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    FastAPI Backend (Python)                  │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │
-│  │ Sarvam   │  │ Google   │  │ Sentiment│  │ Escalation│   │
-│  │ ASR/TTS  │  │ Gemini   │  │ Analysis │  │ Logic     │   │
-│  └──────────┘  └──────────┘  └──────────┘  └──────────┘   │
-└─────────────────────────────────────────────────────────────┘
+
+---
+
+## Voice Pipeline — Per Turn
+
+```mermaid
+sequenceDiagram
+    participant C as Citizen
+    participant WS as WebSocket
+    participant P as Pipeline
+    participant V as Verification
+    participant E as Escalation
+
+    C->>WS: audio chunk (base64 WAV)
+    WS->>P: ASR → transcript + confidence
+    P->>P: prosodic features (pitch, energy, rate)
+    P->>P: dialect-aware NLU → intent + entities
+    P->>P: multi-modal sentiment fusion
+    P->>V: generate verification prompt
+    V-->>C: "Did I understand correctly? You are calling about..."
+    C->>WS: verification_response (correct / partial / incorrect)
+    V->>P: confirmed → composite confidence score
+    P->>E: evaluate thresholds
+    alt confidence OK
+        E-->>C: TTS response in citizen's dialect
+    else low confidence / distress / repeated failure
+        E-->>Agent: escalation packet with full context
+    end
 ```
 
-## 🧠 Core Voice Pipeline
+---
 
-The system processes each turn through 9 stages:
+## Features
 
-1. **ASR** — Speech-to-text via Sarvam AI with per-token confidence
-2. **Prosodic Analysis** — Extract pitch, energy, speaking rate using librosa
-3. **Dialect-Aware NLU** — Intent extraction via Google Gemini, conditioned on district dialect profile
-4. **Multi-Modal Sentiment** — Fuse text-based and prosodic signals; detect distress
-5. **Verification Loop** — Auto-restate citizen issue back to them in their dialect; await confirmation
-6. **Confidence Scoring** — Composite score from ASR + intent entropy + sentiment + clarification attempts
-7. **Escalation Engine** — Route based on confidence thresholds and distress signals
-8. **Text-to-Speech** — Sarvam AI TTS; falls back to local Coqui if unavailable
-9. **Audit Trail** — Log every state transition to PostgreSQL for compliance and feedback
+### Dialect-Aware Understanding
 
-**Central Design Constraint:** Correct understanding before action. Every component serves the verification loop.
+The system maps each of Karnataka's districts to a dialect profile, injecting vocabulary hints, formality register, and code-mixing patterns into the Gemini prompt before any NLU call is made.
+
+**9 district profiles covered:** Bengaluru Urban, Bengaluru Rural, Mysuru, Mangaluru (Tulu coast), Udupi, Hubballi-Dharwad, Belagavi, Kalaburagi, Vijayapura — each with 20–40 dialect terms, regional greetings, and observed code-mixing patterns (English, Hindi, Urdu).
+
+Verification prompts are rendered in the citizen's dialect register, not generic Kannada — so a Mangaluru caller hears *"Yenu helti, naanu sariyaagi tagonde?"* rather than a Bengaluru-tuned phrasing.
+
+### Verification Loop
+
+After every turn, the system restates the citizen's issue back to them before committing to any intent. The citizen can respond with three states:
+
+- **Correct** — confirmation recorded; pipeline proceeds
+- **Partial** — clarification count increments; targeted follow-up question generated
+- **Incorrect** — if fewer than 2 clarifications attempted, re-asks; otherwise escalates with reason `repeated_clarification`
+
+This loop is the primary defense against wrong intent extraction. It runs before any escalation or final response decision.
+
+### Composite Confidence Scoring
+
+```mermaid
+block-beta
+    columns 4
+    A["ASR Confidence\n× 0.35"]:1
+    B["1 − Intent Entropy\n× 0.35"]:1
+    C["1 − Sentiment Intensity\n× 0.20"]:1
+    D["Clarification Penalty\n−0.15 per count"]:1
+    E["Composite Score\n(0–1)"]:4
+    A --> E
+    B --> E
+    C --> E
+    D --> E
+```
+
+- **< 0.6** → trigger clarification
+- **< 0.4** → escalate with reason `low_confidence`
+- Sentiment label `distress / fear / anger` + intensity > 0.7 → escalate with reason `high_distress`
+- Clarification count ≥ 2 → escalate with reason `repeated_clarification`
+
+### Multi-Modal Sentiment
+
+Text-based sentiment from Gemini is fused with prosodic signals extracted by librosa (pitch variance, energy, speaking rate). A caller who uses calm words but exhibits elevated vocal stress will produce a higher distress score than text alone would suggest.
+
+Fusion weights: text 0.6, prosodic 0.4. Output includes per-component breakdown and a rolling timeline of the last 20 turns.
+
+### Karnataka Grievance Taxonomy
+
+30+ intent categories derived from Sevasindhu and Janasevaka — labeled in Kannada, Hindi, and English. Each category carries an escalation priority (1 = emergency, 5 = routine) and a responsible department mapping.
+
+The Gemini NLU prompt is constrained to return only valid taxonomy IDs. Any out-of-taxonomy response triggers a human review flag.
+
+Always-escalate categories: `distress_emergency`, `women_safety`, `hospital_complaint`, `food_adulteration`.
+
+### PII Redaction
+
+Before any text reaches Gemini, names, phone numbers, Aadhaar sequences, and addresses are replaced with tokens (`CITIZEN_NAME_N`, `PHONE_N`, `AADHAAR_N`, `ADDRESS_N`). Token maps are maintained in-memory; PII never appears in audit logs or training exports.
+
+Controlled by `PII_REDACTION_ENABLED` in `.env`. Disabled automatically in mock mode.
+
+### Agent Dashboard
+
+When a call escalates, the agent receives a structured handoff packet:
+
+- Full conversation transcript
+- Sentiment timeline (rolling chart)
+- Confidence history per turn
+- Structured intent + dialect tag
+- Audit log summary
+
+Agents can correct misclassified intents directly from the dashboard. Corrections propagate to the feedback loop and are marked in the audit trail with actor and timestamp.
+
+### Feedback Loop + Audit Trail
+
+Every confirmed interaction writes a row to `verified_interactions` in PostgreSQL. Agent corrections update the `final_intent` field. The full corpus is exportable as JSONL for retraining.
+
+Every state transition — session creation, verification confirmation, escalation, agent correction — is appended to `audit_log` with an immutable timestamp and actor field.
 
 ---
 
-## 📋 Prerequisites
+## Tech Stack
 
-### Backend Requirements
-- **Python**: 3.9 or higher
-- **pip**: Latest version
-- **Redis**: 6.0+ (for session management and ephemeral state)
-- **PostgreSQL**: 12+ (for audit trail and feedback loop)
-
-### Frontend Requirements
-- **Flutter**: 3.0.0 or higher
-- **Dart**: 2.17.0 or higher
-- **Chrome/Edge**: For web development
+| Layer | Technology | Why |
+|---|---|---|
+| Frontend | Flutter Web | Single codebase for citizen view + agent dashboard; mobile-ready |
+| Backend | FastAPI | Async-native, WebSocket-first, fast iteration |
+| ASR / TTS | Sarvam AI | Best-in-class Kannada/Hindi/English with dialect coverage |
+| NLU | Google Gemini | Strong multilingual reasoning; cheap; constrained-output via taxonomy |
+| Prosody | librosa | Lightweight pitch/energy/rate extraction; no GPU required |
+| Session state | Redis | Sub-ms reads; ephemeral and sticky-session friendly |
+| Audit + feedback | PostgreSQL | Durable, SQL-queryable for compliance and retraining |
 
 ---
 
-## 🚀 Quick Start
+## Running the Project
 
-### Option 1: Docker Compose (Recommended)
+### Docker (recommended)
 
 ```bash
-git clone https://github.com/yourusername/samvaad-setu.git
-cd samvaad-setu
-
-# One-command start: backend + Redis + Postgres + frontend
-docker-compose up
-
-# Access:
-# Frontend: http://localhost:8081
-# Backend:  http://localhost:8000
-# Swagger:  http://localhost:8000/docs
+docker compose up
 ```
 
-### Option 2: Manual Setup
+Backend on `:8000`, frontend on `:8081`, Redis and Postgres wired automatically.
 
-### 1. Clone the Repository
-
-```bash
-git clone https://github.com/yourusername/samvaad-setu.git
-cd samvaad-setu
-```
-
----
-
-## 🔧 Backend Setup
-
-### Step 1: Navigate to Backend Directory
+### Manual
 
 ```bash
+# Backend
 cd backend
-```
-
-### Step 2: Create Virtual Environment
-
-```bash
-# Create virtual environment
-python3 -m venv venv
-
-# Activate virtual environment
-# On macOS/Linux:
-source venv/bin/activate
-
-# On Windows:
-venv\Scripts\activate
-```
-
-### Step 3: Install Dependencies
-
-```bash
+python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-```
-
-### Step 4: Configure Environment Variables
-
-Create a `.env` file in the `backend/` directory:
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env` with your configuration:
-
-```env
-# ---- Environment ----
-# Set to 'mock' to run without real API keys (all services return fake but realistic data)
-ENVIRONMENT=production
-
-# ---- API Keys (Get from https://www.sarvam.ai / https://makersuite.google.com) ----
-SARVAM_API_KEY=your_sarvam_api_key_here
-GEMINI_API_KEY=your_gemini_api_key_here
-
-# ---- Sarvam Configuration ----
-SARVAM_ASR_MODEL=saarika:v2.5
-SARVAM_TTS_MODEL=bulbul:v1
-
-# ---- Redis Configuration ----
-REDIS_HOST=localhost
-REDIS_PORT=6379
-REDIS_DB=0
-
-# ---- PostgreSQL Configuration ----
-POSTGRES_URL=postgresql://localhost:5432/samvaad_setu
-
-# ---- Server Configuration ----
-CORS_ORIGINS=["http://localhost:8081","http://localhost:3000"]
-MAX_CLARIFICATION_TURNS=3
-
-# ---- Feature Flags ----
-PII_REDACTION_ENABLED=true
-ENABLE_PROSODY=true
-AUDIO_RETENTION_HOURS=0
-LATENCY_LOGGING=true
-```
-
-**Important:** `CORS_ORIGINS` must be a JSON array string.
-
-### Step 5: Set Up Database (PostgreSQL)
-
-```bash
-# On macOS (using Homebrew):
-brew services start postgresql@15
-
-# On Linux:
-sudo systemctl start postgresql
-
-# Create database
-psql -c "CREATE DATABASE samvaad_setu;"
-```
-
-### Step 6: Start Redis (if not running)
-
-```bash
-# On macOS (using Homebrew):
-brew services start redis
-
-# On Linux:
-sudo systemctl start redis
-
-# On Windows (using WSL or Docker):
-docker run -d -p 6379:6379 redis:latest
-```
-
-### Step 7: Initialize Database Tables
-
-```bash
-cd backend
+cp .env.example .env          # add API keys or set ENVIRONMENT=mock
 alembic upgrade head
-```
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
-### Step 8: Run the Backend Server
-
-```bash
-python main.py
-```
-
-The backend will start on `http://localhost:8000`
-
-**Verify it's running:**
-```bash
-curl http://localhost:8000/health
-```
-
-Expected response:
-```json
-{
-  "status": "ok",
-  "mode": "production",
-  "redis_connected": true,
-  "postgres_connected": true
-}
-```
-
----
-
-## 📱 Frontend Setup
-
-### Step 1: Navigate to Frontend Directory
-
-```bash
+# Frontend (separate terminal)
 cd app_frontend
-```
-
-### Step 2: Install Flutter Dependencies
-
-```bash
 flutter pub get
-```
-
-### Step 3: Configure Backend URL
-
-Edit `lib/config/app_config.dart`:
-
-```dart
-class AppConfig {
-  // For local development
-  static const String baseUrl = 'http://localhost:8000';
-  static const String wsUrl = 'ws://localhost:8000/ws';
-  
-  // For production, update to your deployed backend URL
-  // static const String baseUrl = 'https://your-backend.com';
-  // static const String wsUrl = 'wss://your-backend.com/ws';
-}
-```
-
-### Step 4: Run the Flutter App
-
-#### For Web Development:
-
-```bash
 flutter run -d chrome --web-port 8081
 ```
 
-The app will open in Chrome at `http://localhost:8081`
+Citizen view at `http://localhost:8081/`, agent dashboard at `http://localhost:8081/agent`.
 
-#### For Android:
+### Mock Mode
 
-```bash
-# Connect Android device or start emulator
-flutter run -d android
+Set `ENVIRONMENT=mock` in `backend/.env` to run without API keys. All AI services return realistic fake data with simulated latency — useful for UI testing and demos.
+
+---
+
+## Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `ENVIRONMENT` | `production` | Set `mock` to skip real API calls |
+| `SARVAM_API_KEY` | — | Sarvam AI (ASR + TTS) |
+| `GEMINI_API_KEY` | — | Google AI Studio (NLU) |
+| `REDIS_URL` | `redis://localhost:6379` | Session store |
+| `POSTGRES_URL` | `postgresql://localhost:5432/samvaad_setu` | Audit + feedback DB |
+| `CORS_ORIGINS` | `["http://localhost:8081"]` | JSON array — required for pydantic-settings |
+| `PII_REDACTION_ENABLED` | `true` | Mask PII before LLM calls |
+| `ENABLE_PROSODY` | `true` | Librosa feature extraction; falls back to neutral if `false` |
+| `AUDIO_RETENTION_HOURS` | `0` | Audio not persisted by default |
+| `LATENCY_LOGGING` | `true` | Per-stage timing logs |
+
+---
+
+## API Endpoints
+
 ```
+GET  /health                              backend + Redis + Postgres status
+GET  /health/latency                      rolling p50/p95 per pipeline stage
+POST /sessions?district=...&language=...  create session (idempotent via Idempotency-Key)
+WS   /ws/{session_id}                     voice pipeline
 
-#### For iOS:
+GET  /agent/queue                         escalations by priority
+GET  /sessions/{id}/escalation-packet     full handoff context
+POST /sessions/{id}/agent-correction      write agent edit → feedback loop
+GET  /audit/{session_id}                  full audit trail
 
-```bash
-# Requires macOS with Xcode
-flutter run -d ios
-```
-
-#### For macOS Desktop:
-
-```bash
-flutter run -d macos
+GET  /training-data/export?format=jsonl   export verified interactions
+GET  /docs                                Swagger UI
 ```
 
 ---
 
-## 🧪 Testing the Complete Flow
+## Latency Budget
 
-### 1. Start Backend
-```bash
-cd backend
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-python main.py
-```
+Target end-to-end: **< 1.5 s**
 
-### 2. Start Frontend
-```bash
-cd app_frontend
-flutter run -d chrome --web-port 8081
-```
+| Stage | Budget |
+|---|---|
+| ASR (streaming) | 300 ms |
+| Prosodic features | 50 ms |
+| NLU (Gemini) | 500 ms |
+| Sentiment fusion | 30 ms |
+| Verification logic | 20 ms |
+| TTS (streaming) | 400 ms |
+| WebSocket overhead | 100 ms |
 
-### 3. Test Voice Pipeline
-
-1. **Click the microphone button** to start recording
-2. **Speak clearly** in Kannada, Hindi, or English:
-   - Example (Kannada): "ನನ್ನ ಪ್ರದೇಶದಲ್ಲಿ ಕಸ ಸಂಗ್ರಹಣೆ ಆಗುತ್ತಿಲ್ಲ"
-   - Example (Hindi): "मेरे क्षेत्र में कचरा संग्रह नहीं हो रहा है"
-   - Example (English): "Garbage is not being collected in my area"
-3. **Click stop** to end recording
-4. **Observe**:
-   - Your transcript appears in a citizen bubble
-   - AI response appears in an AI bubble
-   - Verification buttons appear (CORRECT/PARTIAL/INCORRECT)
-5. **Click a verification button** to confirm or correct
+Per-stage actuals available at `/health/latency`.
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 samvaad-setu/
-├── backend/                       # Python FastAPI backend
-│   ├── main.py                   # FastAPI + WebSocket voice pipeline
-│   ├── config.py                 # Pydantic settings (reads .env)
-│   ├── db.py                     # Async SQLAlchemy engine + session factory
-│   ├── requirements.txt          # Python dependencies
-│   ├── .env                      # Environment variables (create from .env.example)
-│   ├── alembic.ini               # Database migration config
-│   ├── migrations/               # Alembic migrations for audit + feedback tables
-│   ├── middleware/
-│   │   └── latency.py            # Per-stage latency tracking (p50/p95)
-│   ├── models/
-│   │   ├── session_model.py      # Session state + turns + confidence
-│   │   └── audit_model.py        # SQLAlchemy ORM: AuditLog, VerifiedInteraction
-│   ├── data/                     # Static data (JSON)
-│   │   ├── dialect_profiles.json # 9 Karnataka district dialect profiles
-│   │   ├── karnataka_grievance_taxonomy.json # 30+ intent categories
-│   │   └── verification_phrasings.json # Dialect-conditioned rephrasings
+├── backend/
+│   ├── main.py                          FastAPI app + WebSocket pipeline
+│   ├── config.py                        Pydantic settings
 │   ├── services/
-│   │   ├── asr.py               # Sarvam AI speech-to-text
-│   │   ├── tts.py               # Sarvam AI text-to-speech (with local fallback)
-│   │   ├── nlu.py               # Google Gemini NLU (intent extraction)
-│   │   ├── prosody.py           # Librosa-based pitch/energy/rate features
-│   │   ├── sentiment.py         # Text-based sentiment + multi-modal fusion
-│   │   ├── dialect_context.py   # District → dialect profile mapping
-│   │   ├── verification_engine.py # Restate + 3-state confirmation loop
-│   │   ├── confidence_scorer.py # Composite confidence (ASR+entropy+sentiment+clarif)
-│   │   ├── intent_taxonomy.py   # Constrained intent validation + escalation priority
-│   │   ├── escalation.py        # Escalation rules engine
-│   │   ├── audit_log.py         # Fire-and-forget DB writes (every state transition)
-│   │   ├── feedback_loop.py     # Verified interactions export (JSONL for retraining)
-│   │   ├── pii_redactor.py      # Redact PII before LLM calls (phone, Aadhaar, names)
-│   │   ├── session_manager.py   # Redis session CRUD
-│   │   └── agent_queue.py       # Priority queue for escalations + agent WebSocket registry
-│   └── tests/                    # Unit tests for all services
-│       ├── test_verification_engine.py
-│       ├── test_confidence_scorer.py
-│       ├── test_dialect_context.py
-│       ├── test_sentiment_prosody.py
-│       ├── test_intent_taxonomy.py
-│       ├── test_audit_feedback.py
-│       ├── test_pii_redactor.py
-│       ├── test_latency.py
-│       └── test_agent_dashboard.py
+│   │   ├── asr.py                       Sarvam AI ASR
+│   │   ├── tts.py                       Sarvam AI TTS + local fallback
+│   │   ├── nlu.py                       Gemini NLU with dialect + taxonomy injection
+│   │   ├── prosody.py                   librosa pitch / energy / rate
+│   │   ├── sentiment.py                 Text + prosodic fusion
+│   │   ├── dialect_context.py           District → dialect profile mapping
+│   │   ├── verification_engine.py       Restate → 3-state confirmation loop
+│   │   ├── confidence_scorer.py         Composite score calculation
+│   │   ├── intent_taxonomy.py           Karnataka grievance taxonomy
+│   │   ├── escalation.py                Escalation rules engine
+│   │   ├── audit_log.py                 PostgreSQL audit writes
+│   │   ├── feedback_loop.py             Verified interactions + JSONL export
+│   │   ├── pii_redactor.py              PII masking before LLM calls
+│   │   └── session_manager.py           Redis session CRUD
+│   ├── models/
+│   │   ├── session_model.py             Session state, turns, confidence
+│   │   └── audit_model.py               SQLAlchemy: AuditLog, VerifiedInteraction
+│   ├── data/
+│   │   ├── dialect_profiles.json        9 district profiles
+│   │   ├── karnataka_grievance_taxonomy.json  30+ intent categories
+│   │   └── verification_phrasings.json  Dialect-conditioned rephrasings
+│   ├── migrations/                      Alembic migrations
+│   └── tests/                           Unit tests for all services
 │
-├── app_frontend/                 # Flutter frontend
+├── app_frontend/
 │   ├── lib/
-│   │   ├── main.dart            # App entry point
-│   │   ├── config/
-│   │   │   └── app_config.dart  # Backend URL configuration
-│   │   ├── models/
-│   │   │   └── session_models.dart # Data models
 │   │   ├── screens/
-│   │   │   ├── home_screen.dart # Main citizen call interface
-│   │   │   └── agent_dashboard.dart # Agent queue + live correction
-│   │   ├── services/
-│   │   │   └── voice_pipeline_service.dart # WebSocket client
-│   │   ├── theme/
-│   │   │   └── app_theme.dart   # UI theme
-│   │   └── widgets/
-│   │       ├── call_header_bar.dart
-│   │       ├── live_chat_bubble.dart
-│   │       ├── live_mic_button.dart
-│   │       ├── ai_interpretation_panel.dart
-│   │       ├── confidence_gauge.dart # Real-time confidence visualization
-│   │       ├── sentiment_timeline.dart # Rolling sentiment chart
-│   │       └── escalation_card.dart
-│   ├── pubspec.yaml             # Flutter dependencies
-│   └── web/                     # Web-specific files
+│   │   │   ├── citizen_view.dart        Voice call interface
+│   │   │   └── agent_dashboard.dart     Live queue + corrections
+│   │   ├── widgets/
+│   │   │   ├── confidence_gauge.dart    Real-time confidence visualization
+│   │   │   └── sentiment_timeline.dart  Rolling sentiment chart
+│   │   └── services/
+│   │       └── voice_pipeline_service.dart  WebSocket client
+│   └── pubspec.yaml
 │
-├── docker-compose.yml           # One-command start: backend + Redis + Postgres + frontend
-├── README.md                    # This file
-├── CLAUDE.md                    # Architecture + implementation guide
-├── DEMO.md                      # Judge-facing demo walkthrough
-└── API_INTEGRATION_FIXES.md     # API integration notes
+├── docker-compose.yml
+├── CLAUDE.md                            Architecture + implementation reference
+└── DEMO.md                              Demo walkthrough
 ```
 
 ---
 
-### 🔑 API Keys Setup
-
-You must obtain the following API keys before running the backend:
-
-**Sarvam AI API Key** (for ASR & TTS: speech recognition and synthesis)
-1. Visit [Sarvam AI](https://www.sarvam.ai/)
-2. Sign up for an account
-3. Navigate to API Keys section
-4. Generate and copy your key to `.env` → `SARVAM_API_KEY`
-
-**Google Gemini API Key** (for NLU: intent extraction and understanding)
-1. Visit [Google AI Studio](https://makersuite.google.com/app/apikey)
-2. Sign in with your Google account
-3. Click "Create API Key"
-4. Copy and paste into `.env` → `GEMINI_API_KEY`
-
-Alternatively, set `ENVIRONMENT=mock` in `.env` to run without real API keys — all AI services return plausible fake data with realistic latency simulation.
-
----
-
-## ✅ Implemented Features
-
-### Core Voice Pipeline
-- ✅ **ASR** — Sarvam AI speech-to-text with per-token confidence scoring
-- ✅ **Prosodic Analysis** — Pitch variance, energy, speaking rate via librosa
-- ✅ **Dialect-Aware NLU** — Gemini-powered intent extraction conditioned on district dialect profiles
-- ✅ **Multi-Modal Sentiment** — Text + prosodic fusion for distress detection
-- ✅ **Verification Loop** — Restate citizen issue → 3-state confirmation (correct/partial/incorrect)
-- ✅ **Confidence Scoring** — Composite score: ASR + intent entropy + sentiment + clarification count
-- ✅ **Escalation Engine** — Route based on confidence thresholds, distress signals, repeated failures
-- ✅ **TTS** — Sarvam AI + local fallback (Coqui)
-- ✅ **Audit Trail** — Every state transition logged to PostgreSQL
-
-### Dialect Handling
-- ✅ **9 District Profiles** — Bengaluru Urban/Rural, Mysuru, Mangaluru (Tulu coast), Udupi, Hubballi-Dharwad, Belagavi, Kalaburagi, Vijayapura
-- ✅ **Vocabulary Hints** — 20–40 dialect terms per district with standard equivalents
-- ✅ **Code-Mixing Patterns** — Englsh, Hindi, Urdu influences per region
-- ✅ **Dialect-Conditioned Rephrasings** — Verification prompts use local idiom + formality register
-
-### Grievance Taxonomy
-- ✅ **30+ Intent Categories** — Derived from Sevasindhu / Janasevaka (water, ration, property tax, electricity, road, health, police, etc.)
-- ✅ **Multi-Lingual Labels** — Kannada, Hindi, English
-- ✅ **Escalation Priority** — 5-level priority (1 = emergency, 5 = routine)
-- ✅ **Always-Escalate Intents** — Distress, women's safety, food adulteration, hospital complaints
-- ✅ **Responsible Department Mapping** — Automatic routing hint
-
-### Privacy & Data Protection
-- ✅ **PII Redaction** — Phone numbers, Aadhaar, names, addresses masked before LLM calls
-- ✅ **Configurable Audio Retention** — Default 0 hours (not persisted); encrypted when retained
-- ✅ **Audit Immutability** — Every action logged with actor + timestamp
-- ✅ **Verified Interactions Export** — JSONL corpus for retraining
-
-### Observability
-- ✅ **Per-Stage Latency Tracking** — p50/p95 milliseconds for ASR, NLU, TTS, etc. via `/health/latency`
-- ✅ **Rolling Buffer** — Last 200 samples per stage; ~5 min history
-- ✅ **Audit Trail REST API** — Fetch full transaction history per session
-- ✅ **Mock Mode** — No API keys required; realistic latency simulation
-
-### Agent Dashboard (Backend)
-- ✅ **Priority Queue** — Escalations sorted by sentiment intensity DESC, created_at ASC
-- ✅ **Real-Time Notifications** — Agent WebSocket registry + broadcast on new escalation
-- ✅ **Full-Context Endpoint** — Transcript, confidence, sentiment timeline, audit summary
-- ✅ **Live Corrections** — Agent can correct intent → propagates to feedback loop
-- ✅ **Session Resolution** — Mark escalated session as handled
-
-### Testing
-- ✅ **Unit Tests** — 8 comprehensive test suites covering all new services
-- ✅ **Mock DB** — In-memory SQLite for testing without PostgreSQL
-- ✅ **Fixtures** — Pre-recorded fixture audio paths for demo-day fallback
-
----
-
-## 🐛 Troubleshooting
-
-### Backend Issues
-
-**Problem: PostgreSQL connection failed**
-```bash
-# Check if PostgreSQL is running
-psql --version
-
-# Verify database exists
-psql -l | grep samvaad_setu
-
-# If database missing, create it:
-psql -c "CREATE DATABASE samvaad_setu;"
-
-# Run migrations
-cd backend
-alembic upgrade head
-```
-
-**Problem: Redis connection failed**
-```bash
-# Check if Redis is running
-redis-cli ping
-# Should return: PONG
-
-# If not running, start Redis
-brew services start redis  # macOS
-sudo systemctl start redis # Linux
-```
-
-**Problem: Alembic migration errors**
-```bash
-# Check migration status
-alembic current
-
-# If stuck, reset (DEV ONLY):
-alembic downgrade base
-alembic upgrade head
-```
-
-**Problem: Import errors for new services**
-```bash
-# Ensure virtual environment is activated
-source venv/bin/activate
-
-# Reinstall dependencies (includes librosa, sqlalchemy-asyncpg)
-pip install -r requirements.txt --upgrade
-```
-
-**Problem: API key errors or rate-limiting**
-```bash
-# If using real API keys, switch to mock mode for testing
-# Edit .env: ENVIRONMENT=mock
-# All services return realistic fake data
-
-# For rate limits on production, the backend has graceful degradation:
-# - Sarvam ASR down → fallback to Whisper
-# - Gemini rate-limited → fallback to rule-based intent classifier
-# - Sarvam TTS down → fallback to local TTS
-```
-
-**Problem: Librosa not installed (prosody module)**
-```bash
-# prosody.py gates itself behind ENABLE_PROSODY flag
-# If librosa is missing, features fall back to neutral values
-# To enable, install: apt-get install libsndfile1
-pip install librosa soundfile
-```
-
-**Problem: PII redaction not working**
-```bash
-# Verify feature flag in .env
-grep PII_REDACTION_ENABLED .env
-# Should be: PII_REDACTION_ENABLED=true
-
-# For testing, set to false to see original text
-```
-
-### Frontend Issues
-
-**Problem: Flutter not found**
-```bash
-# Install Flutter: https://docs.flutter.dev/get-started/install
-flutter doctor
-```
-
-**Problem: Dependencies not installed**
-```bash
-flutter clean
-flutter pub get
-```
-
-**Problem: WebSocket connection fails**
-- Ensure backend is running on `http://localhost:8000`
-- Verify CORS_ORIGINS in backend `.env` includes frontend URL
-- Check `/health` endpoint responds
-- Browser console (F12) will show WebSocket errors
-
-**Problem: Audio recording not working**
-- Grant microphone permissions in browser
-- Use Chrome/Edge (Edge has best WebRTC support)
-- Firefox also works (check permissions → Use microphone)
-- Safari WebSocket is limited; use Chrome for best results
-
-**Problem: ASR/TTS latency issues**
-- Check `/health/latency` to see per-stage bottlenecks
-- Sarvam API rate limits may cause longer waits
-- In mock mode, latencies are simulated (helpful for UX testing)
-
----
-
-## 📊 Monitoring & Logs
-
-### Backend Latency Dashboard
-
-```bash
-# Real-time per-stage latency (p50/p95 ms):
-curl http://localhost:8000/health/latency | jq
-
-# Example output:
-{
-  "stages": {
-    "asr": {
-      "p50_ms": 287.3,
-      "p95_ms": 412.1,
-      "min_ms": 203.5,
-      "max_ms": 518.0,
-      "samples": 42
-    },
-    "nlu": {
-      "p50_ms": 421.8,
-      "p95_ms": 687.2,
-      ...
-    }
-  }
-}
-```
-
-### Audit Trail
-
-```bash
-# Fetch full audit log for a session:
-curl http://localhost:8000/audit/{session_id} | jq
-
-# Returns: array of audit events with timestamps, actors, and payloads
-```
-
-### Agent Queue
-
-```bash
-# Check escalation queue (highest priority first):
-curl http://localhost:8000/agent/queue | jq
-
-# Returns: list of escalated sessions with sentiment, reason, summary
-```
-
-### Backend Logs
-
-The backend provides structured logging:
-
-### Backend Logs
-
-The backend provides structured logging:
-
-```bash
-# Watch logs in real-time
-python main.py
-
-# Key log prefixes:
-# [WS] - WebSocket life cycle
-# [AUDIO] - Audio stream processing
-# [ASR] - Speech recognition responses
-# [NLU] - Intent extraction results
-# [SENTIMENT] - Sentiment analysis signals
-# [VERIFICATION] - Rephrasing + confirmation flow
-# [AUDIT] - Database write results
-# [ESCALATION] - Escalation decisions and triggers
-# [TTS] - Text-to-speech output
-# [LATENCY] - Per-stage timing (when LATENCY_LOGGING=true)
-```
-
-### Frontend Logs
-
-```bash
-# Run with verbose logging
-flutter run -d chrome --web-port 8081 -v
-
-# Monitor in browser console (F12):
-# [WS] - WebSocket messages
-# [AUDIO] - Recording/playback state
-# [UI] - State transitions
-# [API] - HTTP request/response
-```
-
-### Exporting Training Data
-
-```bash
-# Export verified interactions as JSONL (for retraining):
-curl 'http://localhost:8000/training-data/export?format=jsonl&since=2026-05-01' \
-  | head -10 | jq
-
-# Returns: newline-delimited JSON, one verified interaction per line
-# Each row includes: asr_text, intent, agent_corrections, final_intent, etc.
-
-# Save to file for use in fine-tuning NLU models
-curl 'http://localhost:8000/training-data/export?format=jsonl' > feedback_corpus.jsonl
-```
-
----
-
-## 🐳 Docker Deployment
-
-### One-Command Start (Recommended)
-
-```bash
-# Builds and runs backend + Redis + Postgres + frontend on shared network
-docker-compose up
-
-# Stops all services
-docker-compose down
-
-# Services available:
-# Frontend: http://localhost:8081
-# Backend:  http://localhost:8000
-# Redis:    localhost:6379
-# Postgres: localhost:5432
-```
-
-### Manual Backend Deployment
-
-```bash
-cd backend
-docker build -t samvaad-setu-backend .
-docker run -p 8000:8000 --env-file .env \
-  --network samvaad-net \
-  -e REDIS_HOST=redis \
-  -e POSTGRES_URL=postgresql://postgres:password@postgres:5432/samvaad_setu \
-  samvaad-setu-backend
-```
-
-### Frontend Deployment (Web)
-
-```bash
-cd app_frontend
-flutter build web --release
-# Deploy the build/web directory to your hosting service
-```
-
----
-
-## 🧪 Running Unit Tests
-
-```bash
-# Test all new services
-cd backend
-pytest tests/ -v
-
-# Test a specific module
-pytest tests/test_confidence_scorer.py -v
-
-# Run with coverage
-pytest tests/ --cov=services --cov-report=html
-open htmlcov/index.html
-```
-
-Key test files:
-- `test_verification_engine.py` — Restate + 3-state confirmation
-- `test_confidence_scorer.py` — Composite scoring logic
-- `test_dialect_context.py` — Dialect-conditioned rephrasings
-- `test_sentiment_prosody.py` — Multi-modal fusion
-- `test_intent_taxonomy.py` — Intent validation
-- `test_audit_feedback.py` — DB persistence and JSONL export
-- `test_pii_redactor.py` — PII pattern matching
-- `test_latency.py` — Per-stage timing
-- `test_agent_dashboard.py` — Queue ordering and agent endpoints
-
----
-
-## 📚 Additional Documentation
-
-- **[CLAUDE.md](./CLAUDE.md)** — Architecture, implementation prompts, API reference
-- **[SETUP_GUIDE.md](./SETUP_GUIDE.md)** — Detailed setup instructions
-- **[TESTING_GUIDE.md](./TESTING_GUIDE.md)** — Testing procedures and fixtures
-- **[DEMO.md](./DEMO.md)** — Judge-facing demo walkthrough
-- **Swagger UI** — Interactive API docs at `http://localhost:8000/docs`
-
----
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
----
-
-## 🙏 Acknowledgments
-
-- **Sarvam AI** — Best-in-class Kannada/Hindi/English ASR and TTS
-- **Google Gemini** — Multilingual reasoning for intent extraction
-- **librosa** — Prosodic feature extraction
-- **Karnataka Government** — 1092 helpline initiative
-- **Sevasindhu & Janasevaka** — Grievance taxonomy reference
-
----
-
-## 📞 Support
-
-For issues and questions:
-- Open an issue on GitHub
-- Check the troubleshooting section above
-- Review [CLAUDE.md](./CLAUDE.md) for architecture details
-- Email: support@samvaad-setu.com
-
----
-
-**Built with ❤️ for Karnataka's citizens — Multilingual, Dialect-Aware, Distress-Sensitive**
+*Built for Karnataka's citizens — multilingual, dialect-aware, distress-sensitive.*
