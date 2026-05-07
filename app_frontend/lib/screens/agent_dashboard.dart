@@ -172,24 +172,42 @@ class _AgentDashboardState extends State<AgentDashboard> {
       print('[AGENT_REPLY_DEBUG] Aborting: no active item selected');
       return;
     }
-    if (_agentWs == null) {
-      print('[AGENT_REPLY_DEBUG] Aborting: agent WebSocket not connected');
-      return;
-    }
-
-    try {
-      final payload = {
-        'type': 'agent_reply',
-        'session_id': _activeItem!.sessionId,
-        'text': text,
-      };
-      print('[AGENT_REPLY_DEBUG] Sending payload: ${jsonEncode(payload)}');
-      _agentWs!.sink.add(jsonEncode(payload));
-      print('[AGENT_REPLY_DEBUG] Message sent successfully');
-    } catch (e) {
-      print('[AGENT_REPLY_DEBUG] Error sending message: $e');
-      return;
-    }
+    // Prefer HTTP delivery (authoritative path to citizen socket). Keep WS send
+    // as best-effort backup to avoid regressions when backend route differs.
+    () async {
+      try {
+        final res = await http.post(
+          Uri.parse(
+              '${AppConfig.backendUrl}/sessions/${_activeItem!.sessionId}/agent-reply'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'text': text, 'agent_id': _agentId}),
+        );
+        print('[AGENT_REPLY_DEBUG] HTTP reply status: ${res.statusCode}');
+        if (res.statusCode >= 400 && _agentWs != null) {
+          final payload = {
+            'type': 'agent_reply',
+            'session_id': _activeItem!.sessionId,
+            'text': text,
+          };
+          _agentWs!.sink.add(jsonEncode(payload));
+          print('[AGENT_REPLY_DEBUG] Fallback WS send done');
+        }
+      } catch (e) {
+        print('[AGENT_REPLY_DEBUG] HTTP send error: $e');
+        if (_agentWs != null) {
+          try {
+            _agentWs!.sink.add(jsonEncode({
+              'type': 'agent_reply',
+              'session_id': _activeItem!.sessionId,
+              'text': text,
+            }));
+            print('[AGENT_REPLY_DEBUG] Fallback WS send after HTTP error');
+          } catch (wsErr) {
+            print('[AGENT_REPLY_DEBUG] WS fallback error: $wsErr');
+          }
+        }
+      }
+    }();
 
     // Optimistic update: add to the visible turn list immediately.
     // For live sessions the ConvPane renders _citizenLiveTurns (from the shared
