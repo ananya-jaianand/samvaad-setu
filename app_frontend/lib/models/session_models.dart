@@ -65,6 +65,18 @@ class SessionTurn {
 
   String get displayText =>
       rawTranscript.isNotEmpty ? rawTranscript : (aiRephrasing ?? '');
+
+  Map<String, dynamic> toAgentMap() => {
+    'speaker': speaker,
+    'raw_transcript': rawTranscript,
+    'ai_rephrasing': aiRephrasing,
+    'asr_confidence': asrConfidence,
+    'verification_state': verificationState ?? 'pending',
+    'intent': intent,
+    'timestamp': DateTime.now().toIso8601String(),
+    if (sentimentLabel != null)
+      'sentiment': {'label': sentimentLabel, 'intensity': sentimentIntensity ?? 0.5},
+  };
 }
 
 class VerificationPrompt {

@@ -6,6 +6,7 @@ import 'screens/citizen_view.dart';
 import 'screens/agent_dashboard.dart';
 import 'screens/analytics_dashboard.dart';
 import 'config/app_config.dart';
+import 'services/voice_pipeline_service.dart';
 
 enum _View { citizen, agent, analytics }
 
@@ -36,15 +37,20 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   _View _view = _View.citizen;
-
-  /// Actual backend environment — fetched from /health on startup.
-  /// Values: 'mock', 'production', or '' while loading.
   String _backendMode = '';
+  late final VoicePipelineService _citizenSvc;
 
   @override
   void initState() {
     super.initState();
+    _citizenSvc = VoicePipelineService();
     _fetchBackendMode();
+  }
+
+  @override
+  void dispose() {
+    _citizenSvc.dispose();
+    super.dispose();
   }
 
   Future<void> _fetchBackendMode() async {
@@ -93,10 +99,10 @@ class _AppShellState extends State<AppShell> {
           Expanded(
             child: IndexedStack(
               index: _viewIndex,
-              children: const [
-                CitizenView(),
-                AgentDashboard(),
-                AnalyticsDashboard(),
+              children: [
+                CitizenView(svc: _citizenSvc),
+                AgentDashboard(citizenSvc: _citizenSvc),
+                const AnalyticsDashboard(),
               ],
             ),
           ),
