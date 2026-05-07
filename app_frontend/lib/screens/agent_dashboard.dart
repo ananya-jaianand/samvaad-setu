@@ -219,6 +219,7 @@ class _AgentDashboardState extends State<AgentDashboard> {
     );
     setState(() {
       if (_isViewingLiveSession) {
+        widget.citizenSvc.addLocalAgentTurn(text);
         _citizenLiveTurns = [..._citizenLiveTurns, optimisticTurn];
       } else {
         _liveTurns.add({

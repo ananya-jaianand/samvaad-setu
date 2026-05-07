@@ -345,6 +345,13 @@ class VoicePipelineService {
     _turnsCtrl.add(List.from(_turns));
   }
 
+  /// Adds a local agent turn immediately (used for live shared-session UI sync).
+  void addLocalAgentTurn(String text) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return;
+    _addTurn(SessionTurn(speaker: 'agent', rawTranscript: trimmed));
+  }
+
   Future<void> _playAudio(String b64) async {
     if (b64.isEmpty) {
       if (_currentState == PipelineState.speaking) _setState(PipelineState.ready);
