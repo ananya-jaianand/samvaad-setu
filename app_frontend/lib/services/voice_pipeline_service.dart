@@ -52,6 +52,8 @@ class VoicePipelineService {
 
   PipelineState _currentState = PipelineState.idle;
   final List<SessionTurn> _turns = [];
+  String _currentLanguage = AppConfig.defaultLanguage;
+  String _currentDistrict = AppConfig.defaultDistrict;
 
   VoicePipelineService() {
     _stateCtrl.add(_currentState);
@@ -68,6 +70,8 @@ class VoicePipelineService {
   Future<void> startSession({String? district, String? language}) async {
     final dist = district ?? AppConfig.defaultDistrict;
     final lang = language ?? AppConfig.defaultLanguage;
+    _currentLanguage = lang;
+    _currentDistrict = dist;
 
     _setState(PipelineState.starting);
     _turns.clear();
@@ -145,10 +149,12 @@ class VoicePipelineService {
         if (aiText.isNotEmpty) {
           _addTurn(SessionTurn(speaker: 'ai', rawTranscript: aiText));
         }
-        if (data['tts_audio_b64'] != null) {
-          await _playAudio(data['tts_audio_b64'] as String);
+        final vrAudio = data['tts_audio_b64'] as String? ?? '';
+        if (vrAudio.isNotEmpty) {
+          await _playAudio(vrAudio);
+        } else {
+          _setState(PipelineState.ready);
         }
-        _setState(PipelineState.ready);
         break;
 
       case 'escalation':
@@ -159,7 +165,19 @@ class VoicePipelineService {
           'escalation_message': data['escalation_message'],
         });
         _escalationCtrl.add(packet);
-        if (data['tts_audio_b64'] != null) {
+        final escAudio = data['tts_audio_b64'] as String? ?? '';
+        if (escAudio.isNotEmpty) {
+          await _playAudio(escAudio);
+        }
+        break;
+
+      case 'agent_audio':
+        final text = (data['text'] ?? '') as String;
+        if (text.isNotEmpty) {
+          _addTurn(SessionTurn(speaker: 'agent', rawTranscript: text));
+        }
+        if (data['tts_audio_b64'] != null &&
+            (data['tts_audio_b64'] as String).isNotEmpty) {
           await _playAudio(data['tts_audio_b64'] as String);
         }
         break;
@@ -245,8 +263,8 @@ class VoicePipelineService {
       _channel!.sink.add(jsonEncode({
         'type': 'audio',
         'data': base64Audio,
-        'language': AppConfig.defaultLanguage,
-        'district': AppConfig.defaultDistrict,
+        'language': _currentLanguage,
+        'district': _currentDistrict,
       }));
     } catch (e) {
       _errorCtrl.add('Failed to send audio: $e');
@@ -294,6 +312,15 @@ class VoicePipelineService {
     _escalationCtrl.add(null);
     _verifyPromptCtrl.add(null);
     _confidenceCtrl.add(null);
+    _setState(PipelineState.idle);
+  }
+
+  /// End the call but keep turns in memory for transcript display.
+  void endCall() {
+    _channel?.sink.close();
+    _channel = null;
+    sessionId = null;
+    _verifyPromptCtrl.add(null);
     _setState(PipelineState.idle);
   }
 

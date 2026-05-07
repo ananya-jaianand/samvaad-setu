@@ -1,16 +1,9 @@
 """
-Agent Queue — manages the escalation priority queue and the registry of
-connected agent WebSockets.
-
-Queue storage: Redis sorted set `escalation_queue` (score = sentiment_intensity,
-higher = higher priority). Metadata stored in Redis hashes. Falls back to an
-in-memory sorted list when Redis is unavailable.
-
-Agent notifications: module-level dict of live agent WebSocket connections.
-When a new escalation fires, `broadcast_escalation` fans out to all agents.
+Agent Queue — manages the escalation priority queue, citizen/agent WebSocket
+registries, and the all-sessions map (used by the agent dashboard to show
+every active call, not just escalated ones).
 """
 import json
-import asyncio
 from datetime import datetime, timezone
 from typing import Optional
 from fastapi import WebSocket
@@ -30,7 +23,6 @@ def unregister_agent(agent_id: str) -> None:
 
 
 async def broadcast_escalation(packet: dict) -> None:
-    """Fan-out an escalation event to all connected agent dashboards."""
     dead: list[str] = []
     for agent_id, ws in list(_agent_connections.items()):
         try:
@@ -41,17 +33,105 @@ async def broadcast_escalation(packet: dict) -> None:
         _agent_connections.pop(agent_id, None)
 
 
+async def broadcast_to_agents(payload: dict) -> None:
+    """Generic fan-out to all connected agent dashboards."""
+    dead: list[str] = []
+    for agent_id, ws in list(_agent_connections.items()):
+        try:
+            await ws.send_json(payload)
+        except Exception:
+            dead.append(agent_id)
+    for agent_id in dead:
+        _agent_connections.pop(agent_id, None)
+
+
 def connected_agent_count() -> int:
     return len(_agent_connections)
+
+
+# ── Citizen WebSocket registry ────────────────────────────────────────────────
+
+_citizen_connections: dict[str, WebSocket] = {}
+
+
+def register_citizen(session_id: str, ws: WebSocket) -> None:
+    _citizen_connections[session_id] = ws
+
+
+def unregister_citizen(session_id: str) -> None:
+    _citizen_connections.pop(session_id, None)
+
+
+async def send_to_citizen(session_id: str, payload: dict) -> bool:
+    ws = _citizen_connections.get(session_id)
+    if not ws:
+        return False
+    try:
+        await ws.send_json(payload)
+        return True
+    except Exception:
+        _citizen_connections.pop(session_id, None)
+        return False
+
+
+# ── Active sessions (all sessions, not just escalated) ───────────────────────
+
+_active_sessions: dict[str, dict] = {}
+
+
+def push_active_session(
+    session_id: str,
+    district: str,
+    language: str,
+    sentiment: str = "calm",
+    sentiment_intensity: float = 0.3,
+    summary: str = "",
+    reason: str = "active",
+    final_intent: Optional[str] = None,
+    created_at: Optional[datetime] = None,
+    is_escalated: bool = False,
+) -> None:
+    existing = _active_sessions.get(session_id, {})
+    _active_sessions[session_id] = {
+        "session_id": session_id,
+        "district": district,
+        "language": language,
+        "sentiment": sentiment,
+        "sentiment_intensity": sentiment_intensity,
+        "summary": summary or existing.get("summary", ""),
+        "reason": reason,
+        "final_intent": final_intent or existing.get("final_intent", "other_grievance"),
+        "created_at": existing.get("created_at") or (created_at or datetime.now(timezone.utc)).isoformat(),
+        "is_escalated": is_escalated,
+    }
+
+
+def remove_active_session(session_id: str) -> None:
+    _active_sessions.pop(session_id, None)
+
+
+def get_active_sessions(limit: int = 20, offset: int = 0) -> list[dict]:
+    """Escalated sessions first (priority DESC), then active sessions (time ASC)."""
+    escalated = sorted(
+        [s for s in _active_sessions.values() if s.get("is_escalated")],
+        key=lambda s: (-s["sentiment_intensity"], s["created_at"]),
+    )
+    active = sorted(
+        [s for s in _active_sessions.values() if not s.get("is_escalated")],
+        key=lambda s: s["created_at"],
+    )
+    return (escalated + active)[offset: offset + limit]
+
+
+def total_active_sessions() -> int:
+    return len(_active_sessions)
 
 
 # ── Escalation queue storage ──────────────────────────────────────────────────
 
 _QUEUE_KEY = "escalation_queue"
 _META_PREFIX = "escalation_meta:"
-
-# In-memory fallback (mirrors the Redis sorted set)
-_memory_queue: list[dict] = []   # list of meta dicts, maintained sorted
+_memory_queue: list[dict] = []
 
 
 def _meta_key(session_id: str) -> str:
@@ -67,18 +147,33 @@ async def push_escalation(
     language: str,
     final_intent: Optional[str],
     created_at: Optional[datetime] = None,
+    sentiment: Optional[str] = None,
 ) -> None:
-    """Add or update an escalated session in the priority queue."""
     meta = {
         "session_id": session_id,
         "sentiment_intensity": sentiment_intensity,
+        "sentiment": sentiment or "calm",
         "reason": reason,
         "summary": summary,
         "district": district,
         "language": language,
         "final_intent": final_intent or "other_grievance",
         "created_at": (created_at or datetime.now(timezone.utc)).isoformat(),
+        "is_escalated": True,
     }
+
+    # Keep the all-sessions map in sync
+    push_active_session(
+        session_id=session_id,
+        district=district,
+        language=language,
+        sentiment=sentiment or "calm",
+        sentiment_intensity=sentiment_intensity,
+        summary=summary,
+        reason=reason,
+        final_intent=final_intent,
+        is_escalated=True,
+    )
 
     try:
         from services.session_manager import _redis_client, _use_redis
@@ -91,14 +186,13 @@ async def push_escalation(
     except Exception as exc:
         print(f"[QUEUE] Redis push failed: {exc}")
 
-    # Memory fallback — keep sorted by (sentiment_intensity DESC, created_at ASC)
     _memory_queue[:] = [e for e in _memory_queue if e["session_id"] != session_id]
     _memory_queue.append(meta)
     _memory_queue.sort(key=lambda e: (-e["sentiment_intensity"], e["created_at"]))
 
 
 async def remove_from_queue(session_id: str) -> None:
-    """Remove a session from the queue when resolved or handled."""
+    remove_active_session(session_id)
     try:
         from services.session_manager import _redis_client, _use_redis
         if _use_redis and _redis_client:
@@ -114,35 +208,9 @@ async def remove_from_queue(session_id: str) -> None:
 
 
 async def get_queue(limit: int = 20, offset: int = 0) -> list[dict]:
-    """
-    Return escalated sessions sorted by sentiment_intensity DESC, created_at ASC.
-    Excludes resolved sessions.
-    """
-    try:
-        from services.session_manager import _redis_client, _use_redis
-        if _use_redis and _redis_client:
-            # ZREVRANGE gives highest score first
-            members = await _redis_client.zrevrange(_QUEUE_KEY, 0, -1, withscores=True)
-            metas: list[dict] = []
-            for member, score in members:
-                raw = await _redis_client.get(_meta_key(member))
-                if raw:
-                    metas.append(json.loads(raw))
-
-            # Stable sort: score DESC already, break ties by created_at ASC
-            metas.sort(key=lambda e: (-e["sentiment_intensity"], e["created_at"]))
-            return metas[offset: offset + limit]
-    except Exception as exc:
-        print(f"[QUEUE] Redis get failed: {exc}")
-
-    return _memory_queue[offset: offset + limit]
+    """Return all active sessions (escalated first, then active)."""
+    return get_active_sessions(limit=limit, offset=offset)
 
 
 async def queue_length() -> int:
-    try:
-        from services.session_manager import _redis_client, _use_redis
-        if _use_redis and _redis_client:
-            return await _redis_client.zcard(_QUEUE_KEY)
-    except Exception:
-        pass
-    return len(_memory_queue)
+    return total_active_sessions()

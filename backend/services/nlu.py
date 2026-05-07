@@ -3,7 +3,7 @@ NLU Service — Google Gemini for intent extraction, rephrasing, and summarizati
 Prompted with district-aware dialect context and Karnataka grievance taxonomy.
 """
 import json
-import google.generativeai as genai
+from google import genai
 from config import settings, DISTRICT_DIALECT_MAP, INTENT_TAXONOMY, VERIFICATION_PHRASES
 from models.session_model import SessionState, Turn
 from services.dialect_context import DialectContextProvider
@@ -13,9 +13,12 @@ from services.pii_redactor import redact as pii_redact, unredact as pii_unredact
 _dialect_provider = DialectContextProvider()
 _taxonomy = IntentTaxonomy()
 
-# Configure Gemini
-genai.configure(api_key=settings.gemini_api_key)
-model = genai.GenerativeModel('gemini-2.0-flash-exp')
+_MODEL = "gemini-2.0-flash"
+_client: genai.Client | None = (
+    genai.Client(api_key=settings.gemini_api_key)
+    if settings.gemini_api_key
+    else None
+)
 
 
 def _build_system_prompt(district: str, language: str) -> str:
@@ -64,7 +67,7 @@ async def extract_intent_and_rephrase(
     Core NLU call. Returns structured JSON with intent, rephrasing,
     verification prompt, and summary.
     """
-    if not settings.gemini_api_key or settings.environment == "mock":
+    if not settings.gemini_api_key or settings.environment == "mock" or _client is None:
         return _mock_nlu(transcript, session.detected_language)
 
     # Redact PII before any text leaves this process boundary
@@ -81,7 +84,9 @@ async def extract_intent_and_rephrase(
     full_prompt = f"{system}\n\nCONVERSATION HISTORY:\n{conversation_history}\n\nCURRENT TRANSCRIPT:\n{redacted_transcript}\n\nRespond with JSON only:"
 
     try:
-        response = await model.generate_content_async(full_prompt)
+        response = await _client.aio.models.generate_content(
+            model=_MODEL, contents=full_prompt
+        )
         raw = response.text.strip()
 
         # Remove markdown code fences if present
@@ -129,7 +134,7 @@ async def generate_escalation_summary(session: SessionState) -> str:
     """
     One-line context summary for the human agent. Runs once at escalation.
     """
-    if not settings.gemini_api_key or settings.environment == "mock":
+    if not settings.gemini_api_key or settings.environment == "mock" or _client is None:
         return f"Citizen called about {session.final_intent or 'unknown issue'}. {session.clarification_count} clarification attempts. Needs human assistance."
 
     prompt = f"""Summarize the following citizen call in ONE sentence (max 25 words) for a human agent who is picking it up mid-call.
@@ -144,7 +149,9 @@ DISTRICT: {session.district}
 Respond with ONLY the one-line summary, no preamble."""
 
     try:
-        response = await model.generate_content_async(prompt)
+        response = await _client.aio.models.generate_content(
+            model=_MODEL, contents=prompt
+        )
         return response.text.strip()
     except Exception as e:
         print(f"Gemini API error: {e}")
@@ -155,7 +162,7 @@ async def generate_ticket_draft(session: SessionState) -> dict:
     """
     Generate a structured ticket draft for the 1092 intake form.
     """
-    if not settings.gemini_api_key or settings.environment == "mock":
+    if not settings.gemini_api_key or settings.environment == "mock" or _client is None:
         return {
             "category": session.final_intent or "other_grievance",
             "sub_category": "",
@@ -182,16 +189,17 @@ Respond ONLY in valid JSON:
 }}"""
 
     try:
-        response = await model.generate_content_async(prompt)
+        response = await _client.aio.models.generate_content(
+            model=_MODEL, contents=prompt
+        )
         raw = response.text.strip()
-        
-        # Remove markdown code fences if present
+
         if raw.startswith('```'):
             raw = raw.split('```')[1]
             if raw.startswith('json'):
                 raw = raw[4:]
         raw = raw.strip()
-        
+
         return json.loads(raw)
     except Exception as e:
         print(f"Gemini API error: {e}")

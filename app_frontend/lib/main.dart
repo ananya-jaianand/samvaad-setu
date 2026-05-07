@@ -1,7 +1,13 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'theme/app_theme.dart';
 import 'screens/citizen_view.dart';
 import 'screens/agent_dashboard.dart';
+import 'screens/analytics_dashboard.dart';
+import 'config/app_config.dart';
+
+enum _View { citizen, agent, analytics }
 
 void main() {
   runApp(const SamvaadSetuApp());
@@ -29,20 +35,70 @@ class AppShell extends StatefulWidget {
 }
 
 class _AppShellState extends State<AppShell> {
-  bool _showAgent = false;
+  _View _view = _View.citizen;
+
+  /// Actual backend environment — fetched from /health on startup.
+  /// Values: 'mock', 'production', or '' while loading.
+  String _backendMode = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchBackendMode();
+  }
+
+  Future<void> _fetchBackendMode() async {
+    try {
+      final res = await http
+          .get(Uri.parse('${AppConfig.backendUrl}/health'))
+          .timeout(const Duration(seconds: 4));
+      if (res.statusCode == 200 && mounted) {
+        final data = jsonDecode(res.body) as Map<String, dynamic>;
+        setState(() => _backendMode = (data['mode'] as String?) ?? 'unknown');
+      }
+    } catch (_) {
+      if (mounted) setState(() => _backendMode = 'unknown');
+    }
+  }
+
+  Color get _bgColor {
+    switch (_view) {
+      case _View.citizen:
+        return AppTheme.ivory;
+      case _View.agent:
+      case _View.analytics:
+        return AppTheme.agentBg;
+    }
+  }
+
+  int get _viewIndex {
+    switch (_view) {
+      case _View.citizen: return 0;
+      case _View.agent: return 1;
+      case _View.analytics: return 2;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _showAgent ? AppTheme.agentBg : AppTheme.ivory,
+      backgroundColor: _bgColor,
       body: Column(
         children: [
           _TopNav(
-            showAgent: _showAgent,
-            onToggle: (v) => setState(() => _showAgent = v),
+            view: _view,
+            onSelect: (v) => setState(() => _view = v),
+            backendMode: _backendMode,
           ),
           Expanded(
-            child: _showAgent ? const AgentDashboard() : const CitizenView(),
+            child: IndexedStack(
+              index: _viewIndex,
+              children: const [
+                CitizenView(),
+                AgentDashboard(),
+                AnalyticsDashboard(),
+              ],
+            ),
           ),
         ],
       ),
@@ -51,10 +107,15 @@ class _AppShellState extends State<AppShell> {
 }
 
 class _TopNav extends StatelessWidget {
-  final bool showAgent;
-  final ValueChanged<bool> onToggle;
+  final _View view;
+  final ValueChanged<_View> onSelect;
+  final String backendMode;
 
-  const _TopNav({required this.showAgent, required this.onToggle});
+  const _TopNav({
+    required this.view,
+    required this.onSelect,
+    required this.backendMode,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -83,7 +144,7 @@ class _TopNav extends StatelessWidget {
                         color: AppTheme.saffron,
                         boxShadow: [
                           BoxShadow(
-                            color: AppTheme.saffron.withOpacity(0.18),
+                            color: AppTheme.saffron.withValues(alpha: 0.18),
                             blurRadius: 0,
                             spreadRadius: 3,
                           ),
@@ -101,7 +162,7 @@ class _TopNav extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    Text(
+                    const Text(
                       '· Karnataka 1092',
                       style: TextStyle(
                         color: AppTheme.shellMuted,
@@ -124,50 +185,68 @@ class _TopNav extends StatelessWidget {
                     children: [
                       _SegBtn(
                         label: 'Citizen',
-                        active: !showAgent,
-                        onTap: () => onToggle(false),
+                        active: view == _View.citizen,
+                        onTap: () => onSelect(_View.citizen),
                       ),
                       _SegBtn(
                         label: 'Agent',
-                        active: showAgent,
-                        onTap: () => onToggle(true),
+                        active: view == _View.agent,
+                        onTap: () => onSelect(_View.agent),
+                      ),
+                      _SegBtn(
+                        label: 'Analytics',
+                        active: view == _View.analytics,
+                        onTap: () => onSelect(_View.analytics),
                       ),
                     ],
                   ),
                 ),
                 const SizedBox(width: 14),
-                // Mock badge
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF171612),
-                    border: Border.all(color: const Color(0xFF26241D)),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 6,
-                        height: 6,
-                        decoration: const BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: AppTheme.sage,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      const Text(
-                        'Mock mode',
-                        style: TextStyle(
-                          color: Color(0xFFCFC8B4),
-                          fontSize: 11.5,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+                // Dynamic backend mode badge — only show when backend has responded
+                if (backendMode.isNotEmpty) _ModeBadge(mode: backendMode),
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ModeBadge extends StatelessWidget {
+  final String mode;
+  const _ModeBadge({required this.mode});
+
+  @override
+  Widget build(BuildContext context) {
+    final isMock = mode == 'mock';
+    final dotColor = isMock ? AppTheme.sage : const Color(0xFF4DA6FF);
+    final label = isMock ? 'Mock mode' : mode == 'production' ? 'Production' : mode;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: const Color(0xFF171612),
+        border: Border.all(color: const Color(0xFF26241D)),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 6,
+            height: 6,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: dotColor,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFFCFC8B4),
+              fontSize: 11.5,
             ),
           ),
         ],

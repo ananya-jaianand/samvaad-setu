@@ -63,11 +63,12 @@ def get_session_factory() -> async_sessionmaker:
 
 
 async def create_all_tables() -> None:
-    """Create tables directly (dev / test path). Production uses Alembic."""
+    """Create tables if they don't exist. Safe to call on every startup."""
     from models.audit_model import AuditLog, VerifiedInteraction  # noqa: F401 — registers models
 
-    factory = get_session_factory()
-    async with factory.kw["bind"].begin() as conn:  # type: ignore[index]
+    if _engine is None:
+        init_db()
+    async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
 

@@ -24,6 +24,8 @@ from services.feedback_loop import write_verified_interaction, record_agent_corr
 from services.agent_queue import (
     push_escalation, remove_from_queue, get_queue, queue_length,
     register_agent, unregister_agent, broadcast_escalation, connected_agent_count,
+    push_active_session, remove_active_session,
+    register_citizen, unregister_citizen, send_to_citizen, broadcast_to_agents,
 )
 from services.intent_taxonomy import IntentTaxonomy
 
@@ -40,12 +42,39 @@ app = FastAPI(
 
 @app.on_event("startup")
 async def _startup():
-    """Initialise DB engine on startup. Failures are non-fatal in mock mode."""
+    """Initialise DB engine and create tables on startup."""
     try:
         import db as _db
         _db.init_db()
+        await _db.create_all_tables()
+        print("[STARTUP] DB tables ready")
     except Exception as exc:
         print(f"[STARTUP] DB init failed (non-fatal in mock mode): {exc}")
+
+    # Always seed demo sessions so the agent dashboard has data out-of-the-box
+    try:
+        from demo_fixtures.demo_sessions import build_demo_sessions, DEMO_QUEUE_ENTRIES
+        from datetime import timedelta
+
+        demo_sessions = build_demo_sessions()
+        for s in demo_sessions:
+            await session_manager.save_session(s)
+        for i, entry in enumerate(DEMO_QUEUE_ENTRIES):
+            created_at = datetime.now(timezone.utc) - timedelta(minutes=5 + i * 7)
+            await push_escalation(
+                session_id=entry["session_id"],
+                sentiment_intensity=entry["sentiment_intensity"],
+                sentiment=entry["sentiment"],
+                reason=entry["reason"],
+                summary=entry["summary"],
+                district=entry["district"],
+                language=entry["language"],
+                final_intent=entry["final_intent"],
+                created_at=created_at,
+            )
+        print(f"[STARTUP] Seeded {len(demo_sessions)} demo sessions into agent queue")
+    except Exception as exc:
+        print(f"[STARTUP] Demo seed failed (non-fatal): {exc}")
 
 app.add_middleware(LatencyMiddleware)
 app.add_middleware(
@@ -91,6 +120,30 @@ async def create_session(
 
     if idempotency_key:
         await session_manager.set_idempotency(idempotency_key, response)
+
+    # Register in the all-sessions map so it shows up in the agent queue immediately
+    push_active_session(
+        session_id=session.session_id,
+        district=district,
+        language=language,
+        summary="New call connected",
+        reason="active",
+    )
+    await broadcast_to_agents({
+        "type": "session_update",
+        "session": {
+            "session_id": session.session_id,
+            "district": district,
+            "language": language,
+            "sentiment": "calm",
+            "sentiment_intensity": 0.3,
+            "summary": "New call connected",
+            "reason": "active",
+            "final_intent": None,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "is_escalated": False,
+        },
+    })
 
     await log_event(
         session.session_id,
@@ -190,21 +243,33 @@ async def full_context(session_id: str):
             "escalation_priority": _taxonomy.get_escalation_priority(session.final_intent),
         }
 
+    # Load demo translations (no-op for non-demo sessions)
+    try:
+        from demo_fixtures.demo_sessions import DEMO_TURN_TRANSLATIONS
+        _turn_translations = DEMO_TURN_TRANSLATIONS.get(session_id, {})
+    except Exception:
+        _turn_translations = {}
+
     # Build structured transcript (turns without TTS audio to keep payload lean)
-    transcript = [
-        {
+    transcript = []
+    for t in session.turns:
+        base_text = t.raw_transcript or t.ai_rephrasing or ""
+        t_trans = _turn_translations.get(t.turn_id, {})
+        transcript.append({
             "turn_id": t.turn_id,
             "speaker": t.speaker,
             "timestamp": t.timestamp.isoformat(),
-            "raw_transcript": t.raw_transcript,
+            "raw_transcript": base_text,
             "ai_rephrasing": t.ai_rephrasing,
             "intent": t.intent,
             "asr_confidence": t.asr_confidence,
             "sentiment": t.sentiment.model_dump() if t.sentiment else None,
             "verification_state": t.verification_state,
-        }
-        for t in session.turns
-    ]
+            # Language-specific text for the agent dashboard language toggle
+            "en_text": t_trans.get("en", base_text),
+            "hi_text": t_trans.get("hi", base_text),
+            "kn_text": t_trans.get("kn", base_text),
+        })
 
     return {
         "session_id": session.session_id,
@@ -293,6 +358,151 @@ async def export_training_data(format: str = "jsonl", since: Optional[str] = Non
     )
 
 
+# ─── ANALYTICS ───────────────────────────────────────────────────────────────
+
+_ANALYTICS_DISTRICT_DATA = [
+    {"district": "bengaluru_urban",  "label": "Bengaluru Urban",  "lat": 12.97, "lng": 77.59, "calls": 14, "escalated": 5, "avg_sentiment": 0.62, "primary_intent": "police_complaint"},
+    {"district": "mysuru",           "label": "Mysuru",           "lat": 12.30, "lng": 76.64, "calls":  9, "escalated": 2, "avg_sentiment": 0.42, "primary_intent": "ration_card_issue"},
+    {"district": "mangaluru",        "label": "Mangaluru",        "lat": 12.87, "lng": 74.84, "calls":  7, "escalated": 3, "avg_sentiment": 0.68, "primary_intent": "water_supply_complaint"},
+    {"district": "belagavi",         "label": "Belagavi",         "lat": 15.85, "lng": 74.50, "calls":  6, "escalated": 2, "avg_sentiment": 0.52, "primary_intent": "sanitation_garbage"},
+    {"district": "hubballi_dharwad", "label": "Hubballi-Dharwad", "lat": 15.36, "lng": 75.12, "calls":  5, "escalated": 2, "avg_sentiment": 0.48, "primary_intent": "road_repair"},
+    {"district": "kalaburagi",       "label": "Kalaburagi",       "lat": 17.33, "lng": 76.83, "calls":  5, "escalated": 2, "avg_sentiment": 0.55, "primary_intent": "pension_scheme"},
+    {"district": "tumakuru",         "label": "Tumakuru",         "lat": 13.34, "lng": 77.12, "calls":  5, "escalated": 1, "avg_sentiment": 0.40, "primary_intent": "ration_card_issue"},
+    {"district": "bengaluru_rural",  "label": "Bengaluru Rural",  "lat": 13.17, "lng": 77.60, "calls":  4, "escalated": 1, "avg_sentiment": 0.40, "primary_intent": "road_repair"},
+    {"district": "davangere",        "label": "Davangere",        "lat": 14.46, "lng": 75.92, "calls":  4, "escalated": 1, "avg_sentiment": 0.44, "primary_intent": "bescom_billing"},
+    {"district": "vijayapura",       "label": "Vijayapura",       "lat": 16.83, "lng": 75.71, "calls":  4, "escalated": 1, "avg_sentiment": 0.48, "primary_intent": "road_repair"},
+    {"district": "ballari",          "label": "Ballari",          "lat": 15.14, "lng": 76.92, "calls":  4, "escalated": 1, "avg_sentiment": 0.50, "primary_intent": "water_supply_complaint"},
+    {"district": "shivamogga",       "label": "Shivamogga",       "lat": 13.93, "lng": 75.57, "calls":  3, "escalated": 1, "avg_sentiment": 0.38, "primary_intent": "bescom_billing"},
+    {"district": "chitradurga",      "label": "Chitradurga",      "lat": 14.23, "lng": 76.40, "calls":  3, "escalated": 1, "avg_sentiment": 0.45, "primary_intent": "water_supply_complaint"},
+    {"district": "hassan",           "label": "Hassan",           "lat": 13.01, "lng": 76.10, "calls":  3, "escalated": 0, "avg_sentiment": 0.32, "primary_intent": "ration_card_issue"},
+    {"district": "udupi",            "label": "Udupi",            "lat": 13.34, "lng": 74.74, "calls":  3, "escalated": 1, "avg_sentiment": 0.35, "primary_intent": "water_connection"},
+    {"district": "raichur",          "label": "Raichur",          "lat": 16.21, "lng": 77.34, "calls":  3, "escalated": 1, "avg_sentiment": 0.55, "primary_intent": "pension_scheme"},
+    {"district": "bagalkot",         "label": "Bagalkot",         "lat": 16.18, "lng": 75.70, "calls":  3, "escalated": 1, "avg_sentiment": 0.45, "primary_intent": "road_repair"},
+    {"district": "koppal",           "label": "Koppal",           "lat": 15.35, "lng": 76.16, "calls":  2, "escalated": 1, "avg_sentiment": 0.50, "primary_intent": "water_supply_complaint"},
+    {"district": "bidar",            "label": "Bidar",            "lat": 17.91, "lng": 77.52, "calls":  2, "escalated": 1, "avg_sentiment": 0.60, "primary_intent": "pension_scheme"},
+    {"district": "gadag",            "label": "Gadag",            "lat": 15.42, "lng": 75.63, "calls":  2, "escalated": 0, "avg_sentiment": 0.40, "primary_intent": "sanitation_garbage"},
+    {"district": "haveri",           "label": "Haveri",           "lat": 14.79, "lng": 75.40, "calls":  2, "escalated": 0, "avg_sentiment": 0.42, "primary_intent": "sanitation_garbage"},
+    {"district": "ramanagara",       "label": "Ramanagara",       "lat": 12.72, "lng": 77.28, "calls":  2, "escalated": 0, "avg_sentiment": 0.35, "primary_intent": "ration_card_issue"},
+    {"district": "kodagu",           "label": "Kodagu",           "lat": 12.34, "lng": 75.81, "calls":  2, "escalated": 0, "avg_sentiment": 0.28, "primary_intent": "water_connection"},
+    {"district": "kolar",            "label": "Kolar",            "lat": 13.14, "lng": 78.13, "calls":  2, "escalated": 0, "avg_sentiment": 0.38, "primary_intent": "bescom_billing"},
+    {"district": "chikkamagaluru",   "label": "Chikkamagaluru",   "lat": 13.32, "lng": 75.77, "calls":  2, "escalated": 0, "avg_sentiment": 0.30, "primary_intent": "road_repair"},
+    {"district": "yadgir",           "label": "Yadgir",           "lat": 16.77, "lng": 77.13, "calls":  2, "escalated": 1, "avg_sentiment": 0.58, "primary_intent": "pension_scheme"},
+    {"district": "uttara_kannada",   "label": "Uttara Kannada",   "lat": 14.80, "lng": 74.50, "calls":  2, "escalated": 0, "avg_sentiment": 0.35, "primary_intent": "water_connection"},
+    {"district": "mandya",           "label": "Mandya",           "lat": 12.52, "lng": 76.90, "calls":  2, "escalated": 0, "avg_sentiment": 0.38, "primary_intent": "ration_card_issue"},
+    {"district": "chikkaballapur",   "label": "Chikkaballapur",   "lat": 13.44, "lng": 77.73, "calls":  1, "escalated": 0, "avg_sentiment": 0.32, "primary_intent": "road_repair"},
+    {"district": "chamarajanagar",   "label": "Chamarajanagara",  "lat": 11.92, "lng": 76.94, "calls":  1, "escalated": 0, "avg_sentiment": 0.30, "primary_intent": "ration_card_issue"},
+]
+
+
+@app.get("/analytics/overview")
+async def analytics_overview():
+    """Aggregated call analytics for the regional analytics dashboard."""
+    data = _ANALYTICS_DISTRICT_DATA
+    total_calls = sum(d["calls"] for d in data)
+    total_escalated = sum(d["escalated"] for d in data)
+    weighted_sentiment = (
+        sum(d["avg_sentiment"] * d["calls"] for d in data) / total_calls
+        if total_calls else 0
+    )
+    return {
+        "summary": {
+            "total_calls": total_calls,
+            "escalated_calls": total_escalated,
+            "resolved_calls": max(0, total_escalated - 4),
+            "avg_confidence": 0.71,
+            "avg_sentiment_intensity": round(weighted_sentiment, 2),
+        },
+        "by_district": data,
+        "intent_distribution": [
+            {"intent_id": "ration_card_issue",      "label": "Ration Card",      "count": 18},
+            {"intent_id": "water_supply_complaint",  "label": "Water Supply",     "count": 16},
+            {"intent_id": "police_complaint",        "label": "Police/Safety",    "count": 14},
+            {"intent_id": "road_repair",             "label": "Road Repair",      "count": 13},
+            {"intent_id": "pension_scheme",          "label": "Pension Scheme",   "count": 11},
+            {"intent_id": "sanitation_garbage",      "label": "Sanitation",       "count":  8},
+            {"intent_id": "bescom_billing",          "label": "BESCOM Billing",   "count":  7},
+            {"intent_id": "other",                   "label": "Other",            "count":  6},
+        ],
+        "escalation_reasons": [
+            {"reason": "high_distress",           "label": "High Distress",          "count": 12},
+            {"reason": "repeated_clarification",  "label": "Repeated Clarification", "count":  8},
+            {"reason": "low_confidence",          "label": "Low Confidence",         "count":  5},
+        ],
+        "language_distribution": [
+            {"language": "kn", "label": "Kannada", "count": 68},
+            {"language": "hi", "label": "Hindi",   "count": 22},
+            {"language": "en", "label": "English", "count": 10},
+        ],
+        "hourly_trend": [
+            {"hour":  8, "calls":  3, "escalated": 0},
+            {"hour":  9, "calls":  6, "escalated": 1},
+            {"hour": 10, "calls": 10, "escalated": 2},
+            {"hour": 11, "calls": 13, "escalated": 3},
+            {"hour": 12, "calls":  9, "escalated": 2},
+            {"hour": 13, "calls":  8, "escalated": 1},
+            {"hour": 14, "calls": 11, "escalated": 3},
+            {"hour": 15, "calls": 12, "escalated": 2},
+            {"hour": 16, "calls": 10, "escalated": 2},
+            {"hour": 17, "calls": 14, "escalated": 4},
+            {"hour": 18, "calls":  8, "escalated": 2},
+            {"hour": 19, "calls":  5, "escalated": 1},
+            {"hour": 20, "calls":  3, "escalated": 0},
+            {"hour": 21, "calls":  2, "escalated": 0},
+        ],
+    }
+
+
+# ─── DEMO / SEED ENDPOINTS ────────────────────────────────────────────────────
+
+_demo_session_ids: set[str] = set()
+
+
+@app.post("/demo/seed-agent-queue")
+async def demo_seed_agent_queue():
+    """
+    Seed the agent dashboard queue with pre-built demo sessions.
+    Idempotent — calling again re-seeds without duplicating.
+    """
+    from demo_fixtures.demo_sessions import build_demo_sessions, DEMO_QUEUE_ENTRIES, DEMO_SESSION_IDS
+
+    sessions = build_demo_sessions()
+    for session in sessions:
+        await session_manager.save_session(session)
+        _demo_session_ids.add(session.session_id)
+
+    from datetime import datetime, timezone, timedelta
+    for i, entry in enumerate(DEMO_QUEUE_ENTRIES):
+        # Spread created_at so queue sort order is deterministic
+        created_at = datetime.now(timezone.utc) - timedelta(minutes=5 + i * 7)
+        await push_escalation(
+            session_id=entry["session_id"],
+            sentiment_intensity=entry["sentiment_intensity"],
+            sentiment=entry["sentiment"],
+            reason=entry["reason"],
+            summary=entry["summary"],
+            district=entry["district"],
+            language=entry["language"],
+            final_intent=entry["final_intent"],
+            created_at=created_at,
+        )
+
+    return {"seeded": len(sessions), "session_ids": list(DEMO_SESSION_IDS)}
+
+
+@app.delete("/demo/clear-agent-queue")
+async def demo_clear_agent_queue():
+    """Remove all demo sessions from the queue and session store."""
+    from demo_fixtures.demo_sessions import DEMO_SESSION_IDS
+
+    cleared = []
+    for sid in DEMO_SESSION_IDS:
+        await remove_from_queue(sid)
+        _demo_session_ids.discard(sid)
+        cleared.append(sid)
+
+    return {"cleared": len(cleared), "session_ids": cleared}
+
+
 # ─── AGENT WEBSOCKET ──────────────────────────────────────────────────────────
 
 @app.websocket("/ws/agent/{agent_id}")
@@ -330,8 +540,11 @@ async def agent_ws(websocket: WebSocket, agent_id: str):
                 msg = json.loads(raw_msg)
             except json.JSONDecodeError:
                 continue
-            if msg.get("type") == "ping":
+            msg_type = msg.get("type")
+            if msg_type == "ping":
                 await websocket.send_json({"type": "pong"})
+            elif msg_type == "agent_reply":
+                await _handle_agent_ws_reply(msg)
     except WebSocketDisconnect:
         pass
     except Exception:
@@ -365,6 +578,8 @@ async def voice_pipeline(websocket: WebSocket, session_id: str):
         await websocket.send_json({"type": "error", "message": "Session not found"})
         await websocket.close()
         return
+
+    register_citizen(session_id, websocket)
 
     try:
         async for raw_msg in websocket.iter_text():
@@ -404,6 +619,9 @@ async def voice_pipeline(websocket: WebSocket, session_id: str):
         except Exception:
             pass
     finally:
+        unregister_citizen(session_id)
+        remove_active_session(session_id)
+        await broadcast_to_agents({"type": "session_ended", "session_id": session_id})
         await session_manager.save_session(session)
 
 
@@ -443,6 +661,7 @@ async def _handle_audio_turn(websocket: WebSocket, session: SessionState, msg: d
     # Update session language based on ASR detection
     if asr_result.language:
         session.detected_language = asr_result.language
+        language = asr_result.language  # use detected language for all downstream steps
         print(f"[SESSION] Updated language to: {asr_result.language}")
 
     # ── 2. NLU (Gemini) ────────────────────────────────────────────────────
@@ -581,6 +800,37 @@ async def _handle_audio_turn(websocket: WebSocket, session: SessionState, msg: d
         "mock_mode": settings.environment == "mock",
     })
     print(f"[WS] turn_update sent successfully")
+
+    # Broadcast live turn to all connected agent dashboards
+    last_sent = session.sentiment_timeline[-1] if session.sentiment_timeline else {}
+    push_active_session(
+        session_id=session.session_id,
+        district=session.district,
+        language=session.detected_language,
+        sentiment=last_sent.get("label", "calm"),
+        sentiment_intensity=last_sent.get("intensity", 0.3),
+        summary=asr_result.transcript[:120],
+        reason="active",
+        final_intent=session.final_intent,
+        is_escalated=session.is_escalated,
+    )
+    await broadcast_to_agents({
+        "type": "session_live_update",
+        "session_id": session.session_id,
+        "citizen_turn": citizen_turn.model_dump(mode="json"),
+        "ai_turn": ai_turn.model_dump(mode="json"),
+        "session": {
+            "session_id": session.session_id,
+            "district": session.district,
+            "language": session.detected_language,
+            "sentiment": last_sent.get("label", "calm"),
+            "sentiment_intensity": last_sent.get("intensity", 0.3),
+            "summary": asr_result.transcript[:120],
+            "reason": "active",
+            "final_intent": session.final_intent,
+            "is_escalated": session.is_escalated,
+        },
+    })
 
     # Send dedicated verification_prompt so the UI can render the confirm/deny buttons
     await websocket.send_json({
@@ -764,6 +1014,30 @@ async def _handle_agent_correction(websocket: WebSocket, session: SessionState, 
     })
 
 
+async def _handle_agent_ws_reply(msg: dict) -> None:
+    """Agent dashboard sends a voice reply to the citizen via agent WebSocket."""
+    session_id = msg.get("session_id", "")
+    text = msg.get("text", "").strip()
+    if not session_id or not text:
+        return
+
+    session = await session_manager.get_session(session_id)
+    language = session.detected_language if session else "en"
+
+    tts_audio = ""
+    try:
+        tts_audio = await tts.synthesize(text, language=language)
+    except Exception as exc:
+        print(f"[AGENT_REPLY] TTS failed: {exc}")
+
+    delivered = await send_to_citizen(session_id, {
+        "type": "agent_audio",
+        "text": text,
+        "tts_audio_b64": tts_audio,
+    })
+    print(f"[AGENT_REPLY] Delivered to citizen {session_id}: {delivered}")
+
+
 async def _do_escalation(websocket: WebSocket, session: SessionState, esc_decision, language: str):
     """Execute escalation: generate summary, build packet, notify client."""
     print(f"[ESCALATION] _do_escalation called - Reason: {esc_decision.reason}")
@@ -812,9 +1086,11 @@ async def _do_escalation(websocket: WebSocket, session: SessionState, esc_decisi
     # Push to priority queue and notify all connected agent dashboards
     last_sentiment = session.sentiment_timeline[-1] if session.sentiment_timeline else {}
     sentiment_intensity = last_sentiment.get("intensity", 0.5)
+    sentiment_label = last_sentiment.get("label", "calm")
     await push_escalation(
         session_id=session.session_id,
         sentiment_intensity=sentiment_intensity,
+        sentiment=sentiment_label,
         reason=session.escalation_reason,
         summary=session.escalation_summary,
         district=session.district,

@@ -79,6 +79,14 @@ class _CitizenViewState extends State<CitizenView>
     _svc.startSession(language: lang, district: AppConfig.defaultDistrict);
   }
 
+  void _endCall() {
+    _svc.endCall();
+  }
+
+  void _newCall() {
+    _svc.startSession(language: _lang, district: AppConfig.defaultDistrict);
+  }
+
   String get _fontFamily {
     return _langs
             .firstWhere((l) => l.code == _lang,
@@ -130,6 +138,7 @@ class _CitizenViewState extends State<CitizenView>
               builder: (context, verifySnap) {
                 final verifyPrompt = verifySnap.data;
                 final showVerify = verifyPrompt != null;
+                final isEnded = state == PipelineState.idle && turns.isNotEmpty;
 
                 return Stack(
                   children: [
@@ -172,134 +181,193 @@ class _CitizenViewState extends State<CitizenView>
                           ),
                         ),
 
-                        // Stage
-                        Expanded(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              // Mic visualizer
-                              GestureDetector(
-                                onTap: () {
-                                  if (isListening) {
-                                    _svc.stopRecording();
-                                  } else if (canRecord) {
-                                    _svc.startRecording();
-                                  }
-                                },
-                                child: SizedBox(
-                                  width: 320,
-                                  height: 320,
-                                  child: Stack(
-                                    alignment: Alignment.center,
-                                    children: [
-                                      _MicRings(
-                                        state: state,
-                                        breathe: _breathe,
-                                      ),
-                                      _MicBars(
-                                        ctrl: _barsCtrl,
-                                        active: isActive,
-                                        isProcessing: isProcessing,
-                                        isEscalated: isEscalated,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-
-                              const SizedBox(height: 16),
-
-                              // Transcript / AI response
-                              Padding(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 28),
-                                child: ConstrainedBox(
-                                  constraints: const BoxConstraints(
-                                      maxWidth: 760, minHeight: 80),
-                                  child: Column(
-                                    children: [
-                                      Text(
-                                        _statusLabel[stateKey]?[_lang] ?? '',
-                                        style: const TextStyle(
-                                          fontSize: 11.5,
-                                          letterSpacing: 0.14,
-                                          color: AppTheme.muted,
-                                          fontFamily: 'Inter',
-                                        ),
-                                      ),
-                                      const SizedBox(height: 10),
-                                      AnimatedSwitcher(
-                                        duration:
-                                            const Duration(milliseconds: 200),
-                                        child: _buildTranscriptText(
+                        // Stage — transcript summary after call ends
+                        if (isEnded)
+                          Expanded(
+                            child: _CallTranscript(
+                              turns: turns,
+                              lang: _lang,
+                              fontFamily: _fontFamily,
+                              onNewCall: _newCall,
+                            ),
+                          )
+                        else ...[
+                          Expanded(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                // Mic visualizer
+                                GestureDetector(
+                                  onTap: () {
+                                    if (isListening) {
+                                      _svc.stopRecording();
+                                    } else if (canRecord) {
+                                      _svc.startRecording();
+                                    }
+                                  },
+                                  child: SizedBox(
+                                    width: 320,
+                                    height: 320,
+                                    child: Stack(
+                                      alignment: Alignment.center,
+                                      children: [
+                                        _MicRings(
                                           state: state,
-                                          lastCitizenTurn: lastCitizenTurn,
-                                          lastAiTurn: lastAiTurn,
+                                          breathe: _breathe,
                                         ),
-                                      ),
-                                    ],
+                                        _MicBars(
+                                          ctrl: _barsCtrl,
+                                          active: isActive,
+                                          isProcessing: isProcessing,
+                                          isEscalated: isEscalated,
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                 ),
-                              ),
 
-                              const SizedBox(height: 20),
+                                const SizedBox(height: 16),
 
-                              // Verification panel
-                              if (showVerify && !isEscalated)
-                                _VerifyPanel(
-                                  lang: _lang,
-                                  fontFamily: _fontFamily,
-                                  promptText: verifyPrompt.text,
-                                  onVerify: (state) =>
-                                      _svc.sendVerificationResponse(state),
+                                // Transcript / AI response
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 28),
+                                  child: ConstrainedBox(
+                                    constraints: const BoxConstraints(
+                                        maxWidth: 760, minHeight: 80),
+                                    child: Column(
+                                      children: [
+                                        Text(
+                                          _statusLabel[stateKey]?[_lang] ?? '',
+                                          style: const TextStyle(
+                                            fontSize: 11.5,
+                                            letterSpacing: 0.14,
+                                            color: AppTheme.muted,
+                                            fontFamily: 'Inter',
+                                          ),
+                                        ),
+                                        const SizedBox(height: 10),
+                                        AnimatedSwitcher(
+                                          duration: const Duration(
+                                              milliseconds: 200),
+                                          child: _buildTranscriptText(
+                                            state: state,
+                                            lastCitizenTurn: lastCitizenTurn,
+                                            lastAiTurn: lastAiTurn,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
                                 ),
 
-                              // Escalation callout
-                              if (isEscalated)
-                                StreamBuilder<EscalationPacket?>(
-                                  stream: _svc.escalationStream,
-                                  builder: (ctx, escSnap) =>
-                                      _EscalationCallout(
+                                const SizedBox(height: 20),
+
+                                // Verification panel
+                                if (showVerify && !isEscalated)
+                                  _VerifyPanel(
                                     lang: _lang,
                                     fontFamily: _fontFamily,
-                                    packet: escSnap.data,
+                                    promptText: verifyPrompt.text,
+                                    onVerify: (s) =>
+                                        _svc.sendVerificationResponse(s),
+                                  ),
+
+                                // Escalation callout
+                                if (isEscalated)
+                                  StreamBuilder<EscalationPacket?>(
+                                    stream: _svc.escalationStream,
+                                    builder: (ctx, escSnap) =>
+                                        _EscalationCallout(
+                                      lang: _lang,
+                                      fontFamily: _fontFamily,
+                                      packet: escSnap.data,
+                                    ),
+                                  ),
+
+                                // Error banner
+                                if (state == PipelineState.error)
+                                  _ErrorBanner(
+                                    lang: _lang,
+                                    onRetry: () => _svc.startSession(
+                                      language: _lang,
+                                      district: AppConfig.defaultDistrict,
+                                    ),
+                                  ),
+
+                                // End call button
+                                if (canRecord ||
+                                    isListening ||
+                                    state == PipelineState.verifying)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 12),
+                                    child: GestureDetector(
+                                      onTap: _endCall,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 18, vertical: 9),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          border: Border.all(
+                                              color: const Color(0xFFF2D5CE)),
+                                          borderRadius:
+                                              BorderRadius.circular(999),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Container(
+                                              width: 8,
+                                              height: 8,
+                                              decoration: const BoxDecoration(
+                                                shape: BoxShape.circle,
+                                                color: AppTheme.red,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Text(
+                                              _lang == 'kn'
+                                                  ? 'ಕರೆ ಕೊನೆಗೊಳಿಸಿ'
+                                                  : _lang == 'hi'
+                                                      ? 'कॉल समाप्त करें'
+                                                      : 'End call',
+                                              style: const TextStyle(
+                                                fontSize: 13,
+                                                color: AppTheme.red,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+
+                          // Status row
+                          Padding(
+                            padding:
+                                const EdgeInsets.fromLTRB(0, 14, 0, 28),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                _StatusDot(state: state, breathe: _breathe),
+                                const SizedBox(width: 10),
+                                Text(
+                                  _statusLabel[stateKey]?[_lang] ?? '',
+                                  style: TextStyle(
+                                    color: AppTheme.muted,
+                                    fontSize: 13,
+                                    letterSpacing: 0.04,
+                                    fontFamily: _fontFamily,
                                   ),
                                 ),
-
-                              // Error banner
-                              if (state == PipelineState.error)
-                                _ErrorBanner(
-                                  lang: _lang,
-                                  onRetry: () => _svc.startSession(
-                                    language: _lang,
-                                    district: AppConfig.defaultDistrict,
-                                  ),
-                                ),
-                            ],
+                              ],
+                            ),
                           ),
-                        ),
-
-                        // Status row
-                        Padding(
-                          padding:
-                              const EdgeInsets.fromLTRB(0, 14, 0, 28),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              _StatusDot(state: state, breathe: _breathe),
-                              const SizedBox(width: 10),
-                              Text(
-                                _statusLabel[stateKey]?[_lang] ?? '',
-                                style: TextStyle(
-                                  color: AppTheme.muted,
-                                  fontSize: 13,
-                                  letterSpacing: 0.04,
-                                  fontFamily: _fontFamily,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                        ],
                       ],
                     ),
 
@@ -1031,6 +1099,146 @@ class _ErrorBanner extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+// ─── End-of-call transcript ───────────────────────────────────────────────────
+
+class _CallTranscript extends StatelessWidget {
+  final List<SessionTurn> turns;
+  final String lang;
+  final String fontFamily;
+  final VoidCallback onNewCall;
+  const _CallTranscript({
+    required this.turns,
+    required this.lang,
+    required this.fontFamily,
+    required this.onNewCall,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final title = lang == 'kn'
+        ? 'ಸಂಭಾಷಣೆಯ ಸಾರಾಂಶ'
+        : lang == 'hi'
+            ? 'बातचीत का सारांश'
+            : 'Conversation summary';
+    final newCallLabel = lang == 'kn'
+        ? 'ಹೊಸ ಕರೆ ಪ್ರಾರಂಭಿಸಿ'
+        : lang == 'hi'
+            ? 'नई कॉल शुरू करें'
+            : 'Start new call';
+
+    return Column(
+      children: [
+        // Header
+        Container(
+          padding: const EdgeInsets.fromLTRB(28, 20, 28, 16),
+          child: Row(
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: AppTheme.sage,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.ink,
+                  letterSpacing: 0.04,
+                ),
+              ),
+              const Spacer(),
+              GestureDetector(
+                onTap: onNewCall,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: AppTheme.teal,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    newCallLabel,
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      color: Color(0xFFFFF7E5),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        // Turn list
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.fromLTRB(28, 0, 28, 28),
+            itemCount: turns.length,
+            itemBuilder: (_, i) {
+              final t = turns[i];
+              final isCit = t.speaker == 'citizen';
+              final text = t.displayText;
+              if (text.isEmpty) return const SizedBox.shrink();
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 28,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: isCit
+                            ? const Color(0xFFFFF1DD)
+                            : AppTheme.tealSoft,
+                        border: Border.all(
+                          color: isCit
+                              ? const Color(0xFFF1DDA7)
+                              : const Color(0xFFC9DCD5),
+                        ),
+                      ),
+                      child: Center(
+                        child: Text(
+                          isCit ? 'C' : 'AI',
+                          style: TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                            color: isCit
+                                ? AppTheme.saffron2
+                                : AppTheme.teal2,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        text,
+                        style: TextStyle(
+                          fontSize: 15,
+                          height: 1.55,
+                          color: AppTheme.ink,
+                          fontFamily: isCit ? fontFamily : 'Inter',
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 }
