@@ -276,7 +276,7 @@ class _AgentDashboardState extends State<AgentDashboard> {
                   if (idx >= 0) _queue[idx] = updated;
                 });
               }
-              // Append new turns to live transcript if this session is active
+              // Append new turns and update live metrics for the active session
               if (sessionId == _activeItem?.sessionId && mounted) {
                 setState(() {
                   if (data['citizen_turn'] != null) {
@@ -284,6 +284,11 @@ class _AgentDashboardState extends State<AgentDashboard> {
                   }
                   if (data['ai_turn'] != null) {
                     _liveTurns.add(data['ai_turn'] as Map<String, dynamic>);
+                  }
+                  // Update live confidence when not viewing the citizen's own service
+                  if (data['confidence_score'] != null && !_isViewingLiveSession) {
+                    _liveConfidence = ConfidenceScore.fromJson(
+                        data['confidence_score'] as Map<String, dynamic>);
                   }
                 });
               } else if (sessionId != _activeItem?.sessionId && mounted) {
@@ -877,12 +882,24 @@ class _QueuePane extends StatelessWidget {
       child: Column(
         children: [
           _PaneHeader(title: 'Active queue', meta: 'Sorted · priority'),
+          // Live call banner — shown whenever citizen has an active session
+          if (liveSessionId != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+              child: _LiveSessionCard(
+                sessionId: liveSessionId!,
+                district: liveDistrict,
+                turnCount: liveTurnCount,
+                isActive: liveSessionId == activeSessionId,
+                onTap: onSelectLive,
+              ),
+            ),
           Expanded(
             child: loading
                 ? const Center(
                     child: CircularProgressIndicator(
                         color: AppTheme.teal, strokeWidth: 2))
-                : queue.isEmpty
+                : queue.isEmpty && liveSessionId == null
                     ? const Center(
                         child: Text('No active sessions',
                             style: TextStyle(
@@ -944,15 +961,10 @@ class _QueueCard extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
+        clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
-          color: Colors.white,
-          border: Border(
-            top: BorderSide(color: active ? AppTheme.teal : AppTheme.hair),
-            right: BorderSide(color: active ? AppTheme.teal : AppTheme.hair),
-            bottom: BorderSide(color: active ? AppTheme.teal : AppTheme.hair),
-            left: BorderSide(color: _priColor, width: 3),
-          ),
           borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: active ? AppTheme.teal : AppTheme.hair),
           boxShadow: active
               ? [
                   BoxShadow(
@@ -962,90 +974,127 @@ class _QueueCard extends StatelessWidget {
                 ]
               : null,
         ),
-        padding: const EdgeInsets.fromLTRB(12, 11, 12, 11),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(children: [
-                    Text(_fmtTime(item.createdAt),
-                        style: const TextStyle(
-                            fontFamily: 'JetBrains Mono',
-                            fontSize: 11,
-                            color: AppTheme.muted)),
-                    const SizedBox(width: 8),
-                    Text(item.district,
-                        style: const TextStyle(
-                            fontSize: 11.5,
-                            color: AppTheme.ink2,
-                            fontWeight: FontWeight.w500)),
-                    const Spacer(),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 7, vertical: 1),
-                      decoration: BoxDecoration(
-                          color: const Color(0xFFF4F2EC),
-                          borderRadius: BorderRadius.circular(999)),
-                      child: Text(item.language.toUpperCase(),
-                          style: const TextStyle(
-                              fontFamily: 'JetBrains Mono',
-                              fontSize: 10.5,
-                              color: AppTheme.ink2)),
-                    ),
-                  ]),
-                  const SizedBox(height: 6),
-                  Text(item.summary.isNotEmpty ? item.summary : item.reason,
-                      style: const TextStyle(
-                          fontSize: 13.5, color: AppTheme.ink, height: 1.45),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis),
-                  const SizedBox(height: 6),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(
-                        color: _sentBg,
-                        borderRadius: BorderRadius.circular(999)),
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      Container(
-                          width: 6,
-                          height: 6,
-                          decoration: BoxDecoration(
-                              shape: BoxShape.circle, color: _sentFg)),
-                      const SizedBox(width: 6),
-                      Text(item.sentiment,
-                          style: TextStyle(
-                              fontSize: 11.5,
-                              color: _sentFg,
-                              fontWeight: FontWeight.w500)),
-                    ]),
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Left accent bar — separated from border to avoid non-uniform
+              // border + borderRadius which causes Flutter Web rendering failures
+              Container(width: 3, color: _priColor),
+              Expanded(
+                child: Container(
+                  color: Colors.white,
+                  padding: const EdgeInsets.fromLTRB(9, 11, 12, 11),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(children: [
+                              Text(_fmtTime(item.createdAt),
+                                  style: const TextStyle(
+                                      fontFamily: 'JetBrains Mono',
+                                      fontSize: 11,
+                                      color: AppTheme.muted)),
+                              const SizedBox(width: 8),
+                              Flexible(
+                                child: Text(
+                                    item.district.isEmpty ? '—' : item.district,
+                                    style: const TextStyle(
+                                        fontSize: 11.5,
+                                        color: AppTheme.ink2,
+                                        fontWeight: FontWeight.w500),
+                                    overflow: TextOverflow.ellipsis),
+                              ),
+                              const Spacer(),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 7, vertical: 1),
+                                decoration: BoxDecoration(
+                                    color: const Color(0xFFF4F2EC),
+                                    borderRadius: BorderRadius.circular(999)),
+                                child: Text(
+                                    item.language.isEmpty
+                                        ? 'KN'
+                                        : item.language.toUpperCase(),
+                                    style: const TextStyle(
+                                        fontFamily: 'JetBrains Mono',
+                                        fontSize: 10.5,
+                                        color: AppTheme.ink2)),
+                              ),
+                            ]),
+                            const SizedBox(height: 6),
+                            Text(
+                                item.summary.isNotEmpty
+                                    ? item.summary
+                                    : item.reason.isNotEmpty
+                                        ? item.reason
+                                        : 'New call connected',
+                                style: const TextStyle(
+                                    fontSize: 13.5,
+                                    color: AppTheme.ink,
+                                    height: 1.45),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis),
+                            const SizedBox(height: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                  color: _sentBg,
+                                  borderRadius: BorderRadius.circular(999)),
+                              child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Container(
+                                        width: 6,
+                                        height: 6,
+                                        decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            color: _sentFg)),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                        item.sentiment.isEmpty
+                                            ? 'calm'
+                                            : item.sentiment,
+                                        style: TextStyle(
+                                            fontSize: 11.5,
+                                            color: _sentFg,
+                                            fontWeight: FontWeight.w500)),
+                                  ]),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      // Intensity ring
+                      SizedBox(
+                        width: 32,
+                        height: 32,
+                        child: CustomPaint(
+                          painter: _RingPainter(
+                              item.sentimentIntensity,
+                              confColor,
+                              const Color(0xFFEFEAD9),
+                              4),
+                          child: Center(
+                            child: Text('$confPct',
+                                style: const TextStyle(
+                                    fontSize: 8,
+                                    fontWeight: FontWeight.w600,
+                                    fontFamily: 'JetBrains Mono',
+                                    color: AppTheme.ink)),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 10),
-            // Intensity ring
-            SizedBox(
-              width: 32,
-              height: 32,
-              child: CustomPaint(
-                painter: _RingPainter(
-                    item.sentimentIntensity, confColor,
-                    const Color(0xFFEFEAD9), 4),
-                child: Center(
-                  child: Text('$confPct',
-                      style: const TextStyle(
-                          fontSize: 8,
-                          fontWeight: FontWeight.w600,
-                          fontFamily: 'JetBrains Mono',
-                          color: AppTheme.ink)),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -1073,6 +1122,7 @@ class _ConvPane extends StatelessWidget {
   final List<Map<String, dynamic>> liveTurns;
   final List<Map<String, dynamic>> sentTimeline;
   final String revealLang;
+  final bool isLive;
   const _ConvPane({
     required this.item,
     required this.context,
@@ -1081,6 +1131,7 @@ class _ConvPane extends StatelessWidget {
     required this.liveTurns,
     required this.sentTimeline,
     required this.revealLang,
+    this.isLive = false,
   });
 
   @override
@@ -1094,7 +1145,9 @@ class _ConvPane extends StatelessWidget {
         children: [
           _PaneHeader(
             title: 'Live conversation',
-            meta: item != null ? 'SESSION ${item!.sessionId.substring(0, 8).toUpperCase()}' : '—',
+            meta: item != null
+                ? '${isLive ? '● LIVE  ' : ''}SESSION ${item!.sessionId.substring(0, 8).toUpperCase()}'
+                : '—',
           ),
           if (item == null)
             const Expanded(
@@ -1377,12 +1430,14 @@ class _InterpPane extends StatelessWidget {
   final bool reviewed;
   final VoidCallback onApprove;
   final void Function(String, String) onUpdate;
+  final ConfidenceScore? liveConfidence;
   const _InterpPane({
     required this.item,
     required this.fields,
     required this.reviewed,
     required this.onApprove,
     required this.onUpdate,
+    this.liveConfidence,
   });
 
   @override
@@ -1474,11 +1529,15 @@ class _InterpPane extends StatelessWidget {
 
                     const SizedBox(height: 6),
 
-                    // Confidence
-                    if (item != null)
+                    // Live confidence breakdown (real-time when viewing live session)
+                    if (liveConfidence != null) ...[
+                      _LiveConfCard(score: liveConfidence!),
+                      const SizedBox(height: 8),
+                    ] else if (item != null) ...[
                       _ConfCard(
                           sentimentIntensity: item!.sentimentIntensity,
                           label: item!.sentiment),
+                    ],
 
                     const SizedBox(height: 8),
                     Container(
@@ -2056,6 +2115,237 @@ class _Toast extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+// ─── Live session card (queue pane) ──────────────────────────────────────────
+
+class _LiveSessionCard extends StatefulWidget {
+  final String sessionId;
+  final String district;
+  final int turnCount;
+  final bool isActive;
+  final VoidCallback onTap;
+  const _LiveSessionCard({
+    required this.sessionId,
+    required this.district,
+    required this.turnCount,
+    required this.isActive,
+    required this.onTap,
+  });
+
+  @override
+  State<_LiveSessionCard> createState() => _LiveSessionCardState();
+}
+
+class _LiveSessionCardState extends State<_LiveSessionCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: widget.onTap,
+      child: Container(
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: widget.isActive ? AppTheme.teal : AppTheme.hair),
+          boxShadow: widget.isActive
+              ? [BoxShadow(color: AppTheme.teal.withValues(alpha: 0.10), blurRadius: 12, offset: const Offset(0, 3))]
+              : null,
+        ),
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(width: 3, color: AppTheme.red),
+              Expanded(
+                child: Container(
+                  color: Colors.white,
+                  padding: const EdgeInsets.fromLTRB(9, 10, 12, 10),
+                  child: Row(
+                    children: [
+                      AnimatedBuilder(
+                        animation: _pulse,
+                        builder: (_, __) => Container(
+                          width: 7,
+                          height: 7,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: AppTheme.red.withValues(alpha: 0.5 + 0.5 * _pulse.value),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFFFF4F2),
+                                  border: Border.all(color: const Color(0xFFF2D5CE)),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: const Text('LIVE',
+                                    style: TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w700,
+                                        color: AppTheme.red,
+                                        letterSpacing: 0.5,
+                                        fontFamily: 'JetBrains Mono')),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                widget.district.isEmpty ? 'Active call' : widget.district,
+                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: AppTheme.ink),
+                              ),
+                            ]),
+                            const SizedBox(height: 3),
+                            Text(
+                              '${widget.turnCount} turn${widget.turnCount == 1 ? '' : 's'} · tap to open',
+                              style: const TextStyle(fontSize: 11, color: AppTheme.muted),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Icon(Icons.chevron_right_rounded, size: 16, color: AppTheme.muted),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Live confidence card (interpretation pane) ────────────────────────────
+
+class _LiveConfCard extends StatelessWidget {
+  final ConfidenceScore score;
+  const _LiveConfCard({required this.score});
+
+  @override
+  Widget build(BuildContext context) {
+    final pct = (score.compositeScore * 100).round().clamp(0, 100);
+    final ringColor = pct >= 70 ? AppTheme.sage : pct >= 50 ? AppTheme.amber : AppTheme.red;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: AppTheme.hair),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Container(
+              width: 6, height: 6,
+              decoration: const BoxDecoration(shape: BoxShape.circle, color: AppTheme.red),
+            ),
+            const SizedBox(width: 6),
+            const Text('LIVE CONFIDENCE',
+                style: TextStyle(fontSize: 10, letterSpacing: 0.5, color: AppTheme.muted)),
+          ]),
+          const SizedBox(height: 10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              SizedBox(
+                width: 64, height: 64,
+                child: CustomPaint(
+                  painter: _RingPainter(score.compositeScore.clamp(0, 1), ringColor, const Color(0xFFEFEAD9), 6),
+                  child: Center(
+                    child: Text('$pct',
+                        style: const TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.w700,
+                            fontFamily: 'JetBrains Mono', color: AppTheme.ink)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  children: [
+                    _confBar('ASR', score.asrConfidence),
+                    const SizedBox(height: 5),
+                    _confBar('Intent', 1.0 - score.intentEntropy),
+                    const SizedBox(height: 5),
+                    _confBar('Tone', 1.0 - score.sentimentIntensity,
+                        color: score.sentimentIntensity > 0.7 ? AppTheme.red : AppTheme.sage),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (score.clarificationCount > 0) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF7E8),
+                border: Border.all(color: const Color(0xFFF1DDA7)),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                '${score.clarificationCount} clarification${score.clarificationCount == 1 ? '' : 's'}',
+                style: const TextStyle(fontSize: 11, color: Color(0xFF7A5A14)),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _confBar(String label, double value, {Color? color}) {
+    final c = color ?? (value >= 0.7 ? AppTheme.sage : value >= 0.5 ? AppTheme.amber : AppTheme.red);
+    return Row(children: [
+      SizedBox(
+        width: 38,
+        child: Text(label,
+            style: const TextStyle(fontSize: 10, color: AppTheme.muted)),
+      ),
+      Expanded(
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(2),
+          child: Stack(children: [
+            Container(height: 4, color: const Color(0xFFEFEAD9)),
+            FractionallySizedBox(
+              widthFactor: value.clamp(0.0, 1.0),
+              child: Container(height: 4, color: c),
+            ),
+          ]),
+        ),
+      ),
+      const SizedBox(width: 6),
+      Text('${(value * 100).round()}%',
+          style: const TextStyle(
+              fontSize: 10, fontFamily: 'JetBrains Mono', color: AppTheme.ink2)),
+    ]);
   }
 }
 
