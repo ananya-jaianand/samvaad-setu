@@ -13,6 +13,22 @@ services:
       timeout: 3s
       retries: 5
 
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: samvaad
+      POSTGRES_PASSWORD: samvaad
+      POSTGRES_DB: samvaad_setu
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U samvaad -d samvaad_setu"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   backend:
     build:
       context: ./backend
@@ -20,29 +36,35 @@ services:
     ports:
       - "8000:8000"
     env_file:
-      - .env
+      - backend/.env
     environment:
       - REDIS_URL=redis://redis:6379
+      - POSTGRES_URL=postgresql://samvaad:samvaad@postgres:5432/samvaad_setu
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     volumes:
       - ./backend:/app
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
+  # Flutter web — builds static files with nginx. First build takes ~15 min.
+  # To skip: run `flutter run -d chrome --web-port 8081` locally instead.
   frontend:
     build:
-      context: ./frontend
+      context: ./app_frontend
       dockerfile: Dockerfile
+      args:
+        BACKEND_URL: http://localhost:8000
+        WS_URL: ws://localhost:8000/ws
+        DEFAULT_DISTRICT: mangaluru
+        DEFAULT_LANGUAGE: kn
     ports:
-      - "5173:5173"
-    environment:
-      - VITE_API_BASE=http://localhost:8000
-      - VITE_WS_BASE=ws://localhost:8000
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-    command: npm run dev -- --host
+      - "8081:80"
+    depends_on:
+      - backend
 
 volumes:
   redis_data:
+  postgres_data:
