@@ -52,6 +52,8 @@ class VoicePipelineService {
 
   PipelineState _currentState = PipelineState.idle;
   final List<SessionTurn> _turns = [];
+  String _currentLanguage = AppConfig.defaultLanguage;
+  String _currentDistrict = AppConfig.defaultDistrict;
 
   VoicePipelineService() {
     _stateCtrl.add(_currentState);
@@ -68,6 +70,8 @@ class VoicePipelineService {
   Future<void> startSession({String? district, String? language}) async {
     final dist = district ?? AppConfig.defaultDistrict;
     final lang = language ?? AppConfig.defaultLanguage;
+    _currentLanguage = lang;
+    _currentDistrict = dist;
 
     _setState(PipelineState.starting);
     _turns.clear();
@@ -245,8 +249,8 @@ class VoicePipelineService {
       _channel!.sink.add(jsonEncode({
         'type': 'audio',
         'data': base64Audio,
-        'language': AppConfig.defaultLanguage,
-        'district': AppConfig.defaultDistrict,
+        'language': _currentLanguage,
+        'district': _currentDistrict,
       }));
     } catch (e) {
       _errorCtrl.add('Failed to send audio: $e');

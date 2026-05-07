@@ -1,7 +1,10 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'theme/app_theme.dart';
 import 'screens/citizen_view.dart';
 import 'screens/agent_dashboard.dart';
+import 'config/app_config.dart';
 
 void main() {
   runApp(const SamvaadSetuApp());
@@ -31,6 +34,33 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   bool _showAgent = false;
 
+  /// Actual backend environment — fetched from /health on startup.
+  /// Values: 'mock', 'production', or '' while loading.
+  String _backendMode = '';
+
+  /// Demo data toggle — seeds pre-built Karnataka 1092 sessions into the agent queue.
+  bool _demoDataEnabled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchBackendMode();
+  }
+
+  Future<void> _fetchBackendMode() async {
+    try {
+      final res = await http
+          .get(Uri.parse('${AppConfig.backendUrl}/health'))
+          .timeout(const Duration(seconds: 4));
+      if (res.statusCode == 200 && mounted) {
+        final data = jsonDecode(res.body) as Map<String, dynamic>;
+        setState(() => _backendMode = (data['mode'] as String?) ?? 'unknown');
+      }
+    } catch (_) {
+      if (mounted) setState(() => _backendMode = 'unknown');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -40,9 +70,15 @@ class _AppShellState extends State<AppShell> {
           _TopNav(
             showAgent: _showAgent,
             onToggle: (v) => setState(() => _showAgent = v),
+            backendMode: _backendMode,
           ),
           Expanded(
-            child: _showAgent ? const AgentDashboard() : const CitizenView(),
+            child: _showAgent
+                ? AgentDashboard(
+                    demoDataEnabled: _demoDataEnabled,
+                    onDemoToggle: (v) => setState(() => _demoDataEnabled = v),
+                  )
+                : const CitizenView(),
           ),
         ],
       ),
@@ -53,8 +89,13 @@ class _AppShellState extends State<AppShell> {
 class _TopNav extends StatelessWidget {
   final bool showAgent;
   final ValueChanged<bool> onToggle;
+  final String backendMode;
 
-  const _TopNav({required this.showAgent, required this.onToggle});
+  const _TopNav({
+    required this.showAgent,
+    required this.onToggle,
+    required this.backendMode,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -136,38 +177,51 @@ class _TopNav extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 14),
-                // Mock badge
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF171612),
-                    border: Border.all(color: const Color(0xFF26241D)),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 6,
-                        height: 6,
-                        decoration: const BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: AppTheme.sage,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      const Text(
-                        'Mock mode',
-                        style: TextStyle(
-                          color: Color(0xFFCFC8B4),
-                          fontSize: 11.5,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+                // Dynamic backend mode badge — only show when backend has responded
+                if (backendMode.isNotEmpty) _ModeBadge(mode: backendMode),
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ModeBadge extends StatelessWidget {
+  final String mode;
+  const _ModeBadge({required this.mode});
+
+  @override
+  Widget build(BuildContext context) {
+    final isMock = mode == 'mock';
+    final dotColor = isMock ? AppTheme.sage : const Color(0xFF4DA6FF);
+    final label = isMock ? 'Mock mode' : mode == 'production' ? 'Production' : mode;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: const Color(0xFF171612),
+        border: Border.all(color: const Color(0xFF26241D)),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 6,
+            height: 6,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: dotColor,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFFCFC8B4),
+              fontSize: 11.5,
             ),
           ),
         ],

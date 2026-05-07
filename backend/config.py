@@ -27,7 +27,7 @@ class Settings(BaseSettings):
 
     # Model config
     claude_model: str = "claude-sonnet-4-20250514"
-    sarvam_asr_model: str = "saarika:v2"
+    sarvam_asr_model: str = "saarika:v2.5"
     sarvam_tts_model: str = "bulbul:v1"
 
     # Feature flags

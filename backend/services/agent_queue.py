@@ -67,11 +67,13 @@ async def push_escalation(
     language: str,
     final_intent: Optional[str],
     created_at: Optional[datetime] = None,
+    sentiment: Optional[str] = None,
 ) -> None:
     """Add or update an escalated session in the priority queue."""
     meta = {
         "session_id": session_id,
         "sentiment_intensity": sentiment_intensity,
+        "sentiment": sentiment or "calm",
         "reason": reason,
         "summary": summary,
         "district": district,

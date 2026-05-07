@@ -40,10 +40,12 @@ app = FastAPI(
 
 @app.on_event("startup")
 async def _startup():
-    """Initialise DB engine on startup. Failures are non-fatal in mock mode."""
+    """Initialise DB engine and create tables on startup."""
     try:
         import db as _db
         _db.init_db()
+        await _db.create_all_tables()
+        print("[STARTUP] DB tables ready")
     except Exception as exc:
         print(f"[STARTUP] DB init failed (non-fatal in mock mode): {exc}")
 
@@ -293,6 +295,57 @@ async def export_training_data(format: str = "jsonl", since: Optional[str] = Non
     )
 
 
+# ─── DEMO / SEED ENDPOINTS ────────────────────────────────────────────────────
+
+_demo_session_ids: set[str] = set()
+
+
+@app.post("/demo/seed-agent-queue")
+async def demo_seed_agent_queue():
+    """
+    Seed the agent dashboard queue with pre-built demo sessions.
+    Idempotent — calling again re-seeds without duplicating.
+    """
+    from demo_fixtures.demo_sessions import build_demo_sessions, DEMO_QUEUE_ENTRIES, DEMO_SESSION_IDS
+
+    sessions = build_demo_sessions()
+    for session in sessions:
+        await session_manager.save_session(session)
+        _demo_session_ids.add(session.session_id)
+
+    from datetime import datetime, timezone, timedelta
+    for i, entry in enumerate(DEMO_QUEUE_ENTRIES):
+        # Spread created_at so queue sort order is deterministic
+        created_at = datetime.now(timezone.utc) - timedelta(minutes=5 + i * 7)
+        await push_escalation(
+            session_id=entry["session_id"],
+            sentiment_intensity=entry["sentiment_intensity"],
+            sentiment=entry["sentiment"],
+            reason=entry["reason"],
+            summary=entry["summary"],
+            district=entry["district"],
+            language=entry["language"],
+            final_intent=entry["final_intent"],
+            created_at=created_at,
+        )
+
+    return {"seeded": len(sessions), "session_ids": list(DEMO_SESSION_IDS)}
+
+
+@app.delete("/demo/clear-agent-queue")
+async def demo_clear_agent_queue():
+    """Remove all demo sessions from the queue and session store."""
+    from demo_fixtures.demo_sessions import DEMO_SESSION_IDS
+
+    cleared = []
+    for sid in DEMO_SESSION_IDS:
+        await remove_from_queue(sid)
+        _demo_session_ids.discard(sid)
+        cleared.append(sid)
+
+    return {"cleared": len(cleared), "session_ids": cleared}
+
+
 # ─── AGENT WEBSOCKET ──────────────────────────────────────────────────────────
 
 @app.websocket("/ws/agent/{agent_id}")
@@ -443,6 +496,7 @@ async def _handle_audio_turn(websocket: WebSocket, session: SessionState, msg: d
     # Update session language based on ASR detection
     if asr_result.language:
         session.detected_language = asr_result.language
+        language = asr_result.language  # use detected language for all downstream steps
         print(f"[SESSION] Updated language to: {asr_result.language}")
 
     # ── 2. NLU (Gemini) ────────────────────────────────────────────────────
@@ -812,9 +866,11 @@ async def _do_escalation(websocket: WebSocket, session: SessionState, esc_decisi
     # Push to priority queue and notify all connected agent dashboards
     last_sentiment = session.sentiment_timeline[-1] if session.sentiment_timeline else {}
     sentiment_intensity = last_sentiment.get("intensity", 0.5)
+    sentiment_label = last_sentiment.get("label", "calm")
     await push_escalation(
         session_id=session.session_id,
         sentiment_intensity=sentiment_intensity,
+        sentiment=sentiment_label,
         reason=session.escalation_reason,
         summary=session.escalation_summary,
         district=session.district,

@@ -11,7 +11,14 @@ import '../config/app_config.dart';
 // ─── AgentDashboard ───────────────────────────────────────────────────────────
 
 class AgentDashboard extends StatefulWidget {
-  const AgentDashboard({super.key});
+  final bool demoDataEnabled;
+  final ValueChanged<bool> onDemoToggle;
+
+  const AgentDashboard({
+    super.key,
+    required this.demoDataEnabled,
+    required this.onDemoToggle,
+  });
 
   @override
   State<AgentDashboard> createState() => _AgentDashboardState();
@@ -43,10 +50,24 @@ class _AgentDashboardState extends State<AgentDashboard> {
   @override
   void initState() {
     super.initState();
-    _fetchQueue();
+    if (widget.demoDataEnabled) {
+      _seedDemoData().then((_) => _fetchQueue());
+    } else {
+      _fetchQueue();
+    }
     _connectAgentWs();
-    // Poll queue every 15s as fallback
     _pollTimer = Timer.periodic(const Duration(seconds: 15), (_) => _fetchQueue());
+  }
+
+  @override
+  void didUpdateWidget(covariant AgentDashboard old) {
+    super.didUpdateWidget(old);
+    if (old.demoDataEnabled == widget.demoDataEnabled) return;
+    if (widget.demoDataEnabled) {
+      _seedDemoData().then((_) => _fetchQueue());
+    } else {
+      _clearDemoData().then((_) => _fetchQueue());
+    }
   }
 
   @override
@@ -54,6 +75,24 @@ class _AgentDashboardState extends State<AgentDashboard> {
     _agentWs?.sink.close();
     _pollTimer?.cancel();
     super.dispose();
+  }
+
+  // ─── Demo data ────────────────────────────────────────────────────────────
+
+  Future<void> _seedDemoData() async {
+    try {
+      await http
+          .post(Uri.parse('${AppConfig.backendUrl}/demo/seed-agent-queue'))
+          .timeout(const Duration(seconds: 8));
+    } catch (_) {}
+  }
+
+  Future<void> _clearDemoData() async {
+    try {
+      await http
+          .delete(Uri.parse('${AppConfig.backendUrl}/demo/clear-agent-queue'))
+          .timeout(const Duration(seconds: 8));
+    } catch (_) {}
   }
 
   // ─── Backend calls ────────────────────────────────────────────────────────
@@ -232,6 +271,8 @@ class _AgentDashboardState extends State<AgentDashboard> {
               queueTotal: _queueTotal,
               reviewed: _reviewed,
               onResolve: _resolveSession,
+              demoDataEnabled: widget.demoDataEnabled,
+              onDemoToggle: widget.onDemoToggle,
             ),
             _AgSubBar(
               revealLang: _revealLang,
@@ -301,10 +342,16 @@ class _AgBar extends StatelessWidget {
   final int queueTotal;
   final bool reviewed;
   final VoidCallback onResolve;
-  const _AgBar(
-      {required this.queueTotal,
-      required this.reviewed,
-      required this.onResolve});
+  final bool demoDataEnabled;
+  final ValueChanged<bool> onDemoToggle;
+
+  const _AgBar({
+    required this.queueTotal,
+    required this.reviewed,
+    required this.onResolve,
+    required this.demoDataEnabled,
+    required this.onDemoToggle,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -401,6 +448,45 @@ class _AgBar extends StatelessWidget {
               const Text('in queue',
                   style: TextStyle(fontSize: 12.5)),
             ]),
+          ),
+          const SizedBox(width: 14),
+          // Demo data toggle
+          GestureDetector(
+            onTap: () => onDemoToggle(!demoDataEnabled),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              padding: const EdgeInsets.fromLTRB(10, 5, 10, 5),
+              decoration: BoxDecoration(
+                color: demoDataEnabled
+                    ? AppTheme.teal.withValues(alpha: 0.12)
+                    : Colors.white,
+                border: Border.all(
+                  color: demoDataEnabled ? AppTheme.teal : AppTheme.hair,
+                ),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: demoDataEnabled ? AppTheme.teal : AppTheme.muted,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  demoDataEnabled ? 'Demo data on' : 'Demo data',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: demoDataEnabled ? AppTheme.teal2 : AppTheme.muted,
+                    fontWeight: demoDataEnabled
+                        ? FontWeight.w600
+                        : FontWeight.w400,
+                  ),
+                ),
+              ]),
+            ),
           ),
           const SizedBox(width: 14),
           // Agent identity
