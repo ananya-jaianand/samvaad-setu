@@ -191,6 +191,8 @@ class VoicePipelineService {
         if (data['tts_audio_b64'] != null &&
             (data['tts_audio_b64'] as String).isNotEmpty) {
           await _playAudio(data['tts_audio_b64'] as String);
+        } else {
+          _setState(PipelineState.ready);
         }
         break;
 

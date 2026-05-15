@@ -13,7 +13,7 @@ from services.pii_redactor import redact as pii_redact, unredact as pii_unredact
 _dialect_provider = DialectContextProvider()
 _taxonomy = IntentTaxonomy()
 
-_MODEL = "gemini-2.0-flash"
+_MODEL = "gemini-2.0-flash-lite"
 _client: genai.Client | None = (
     genai.Client(api_key=settings.gemini_api_key)
     if settings.gemini_api_key
@@ -208,40 +208,56 @@ Respond ONLY in valid JSON:
 
 def _mock_nlu(transcript: str, language: str) -> dict:
     """Mock NLU for dev without Gemini API key. Uses taxonomy-validated intent IDs."""
+    # Apply PII redaction in mock mode — mirrors the production path and makes
+    # the redaction pipeline visible in demo/dev runs
+    redacted_transcript, token_map = pii_redact(transcript, language)
+    pii_tokens_redacted = list(token_map.keys()) if token_map else []
+
     kw_map = {
         "ಕಸ": "sanitation_garbage", "garbage": "sanitation_garbage", "कचरा": "sanitation_garbage",
         "ನೀರು": "water_supply_complaint", "water": "water_supply_complaint", "पानी": "water_supply_complaint",
         "ರಸ್ತೆ": "road_damage", "road": "road_damage", "सड़क": "road_damage",
         "ವಿದ್ಯುತ್": "electricity_outage", "electricity": "electricity_outage", "बिजली": "electricity_outage",
-        "ಪಿಂಚಣಿ": "pension_scheme", "pension": "pension_scheme",
+        "hescom": "bescom_billing", "bescom": "bescom_billing", "ಬಿಲ್": "bescom_billing",
+        "bill": "bescom_billing", "बिल": "bescom_billing",
+        "ಪಿಂಚಣಿ": "pension_scheme", "pension": "pension_scheme", "पेंशन": "pension_scheme",
+        "ಸಂಧ್ಯಾ ಸುರಕ್ಷಾ": "pension_scheme", "sandhya suraksha": "pension_scheme",
         "ರೇಷನ್": "ration_card_status", "ration": "ration_card_status",
         "ತುರ್ತು": "distress_emergency", "emergency": "distress_emergency", "अत्यावश्यक": "distress_emergency",
     }
     intent = "other_grievance"
     for kw, mapped in kw_map.items():
-        if kw.lower() in transcript.lower():
+        if kw.lower() in redacted_transcript.lower():
             intent = mapped
             break
 
     phrases = {
-        "kn": f"ನೀವು {transcript[:40]}... ಎಂದು ಹೇಳಿದ್ದೀರಿ.",
-        "hi": f"आपने {transcript[:40]}... के बारे में बताया।",
-        "en": f"You mentioned: {transcript[:50]}...",
+        "kn": f"ನೀವು {redacted_transcript[:40]}... ಎಂದು ಹೇಳಿದ್ದೀರಿ.",
+        "hi": f"आपने {redacted_transcript[:40]}... के बारे में बताया।",
+        "en": f"You mentioned: {redacted_transcript[:50]}...",
     }
 
-    return {
+    result = {
         "intent": intent,
         "intent_confidence": 0.78,
         "intent_entropy": 0.22,
         "rephrasing": phrases.get(language, phrases["en"]),
         "verification_prompt": VERIFICATION_PHRASES.get(language, VERIFICATION_PHRASES["en"]),
         "structured_summary": {
-            "problem": transcript[:80],
+            "problem": redacted_transcript[:80],
             "location_mentioned": None,
-            "urgency_indicated": any(w in transcript.lower() for w in ["urgent", "emergency", "ತುರ್ತು", "अत्यावश्यक"]),
-            "key_details": [transcript[:40]],
+            "urgency_indicated": any(w in redacted_transcript.lower() for w in ["urgent", "emergency", "ತುರ್ತು", "अत्यावश्यक"]),
+            "key_details": [redacted_transcript[:40]],
+            "pii_tokens_redacted": pii_tokens_redacted,
         },
         "responsible_department": _taxonomy.get_responsible_department(intent),
         "always_escalate": _taxonomy.should_always_escalate(intent),
         "intent_out_of_taxonomy": False,
     }
+
+    # Restore PII in any fields spoken back to the citizen
+    if token_map:
+        for field in ("rephrasing", "verification_prompt"):
+            result[field] = pii_unredact(result[field], token_map)
+
+    return result

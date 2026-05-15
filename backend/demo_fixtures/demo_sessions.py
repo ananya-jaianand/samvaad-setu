@@ -18,6 +18,7 @@ DEMO_SESSION_IDS = [
     "demo0003-aa11-bb22-cc33-dd4444444403",
     "demo0004-aa11-bb22-cc33-dd4444444404",
     "demo0005-aa11-bb22-cc33-dd4444444405",
+    "demo0006-aa11-bb22-cc33-dd4444444406",  # PII redaction demo
 ]
 
 
@@ -71,14 +72,14 @@ def build_demo_sessions() -> list[SessionState]:
             ),
             Turn(
                 turn_id="t5s1", timestamp=_ago(17), speaker="citizen",
-                raw_transcript="ಹೌದು ಸರಿಯಾಗಿ ಹೇಳಿದಿರಿ. ಆದ್ರೆ ನಾನು ಮೊದ್ಲೇ BWSSB ಗೆ ಕಾಲ್ ಮಾಡಿದ್ದೆ, ಯಾರೂ ಬರ್ಲಿಲ್ಲ. ಮಗು ಜ್ವರ ಬಂದಿದೆ, ಕುಡಿಯೋಕೆ ನೀರೇ ಇಲ್ಲ.",
+                raw_transcript="ಹೌದು ಸರಿಯಾಗಿ ಹೇಳಿದಿರಿ. ಆದ್ರೆ ನಾನು ಮೊದ್ಲೇ KUWSDB ಗೆ ಕಾಲ್ ಮಾಡಿದ್ದೆ, ಯಾರೂ ಬರ್ಲಿಲ್ಲ. ಮಗು ಜ್ವರ ಬಂದಿದೆ, ಕುಡಿಯೋಕೆ ನೀರೇ ಇಲ್ಲ.",
                 asr_confidence=0.92, detected_language="kn",
                 sentiment=TurnSentiment(label="distress", intensity=0.76, text_component=0.72, prosodic_component=0.82),
                 verification_state="correct",
             ),
             Turn(
                 turn_id="t6s1", timestamp=_ago(16), speaker="ai",
-                ai_rephrasing="BWSSB ಗೆ ಮೊದಲೇ ಕಾಲ್ ಮಾಡಿದ್ದರೂ ಸ್ಪಂದನೆ ಇಲ್ಲ, ಮಗುವಿಗೆ ಜ್ವರ ಬೇರೆ ಇದೆ — ತುರ್ತಾಗಿ ಮೇಲಿನ ಅಧಿಕಾರಿಗಳಿಗೆ ದೂರು ಕಳಿಸ್ತೇನೆ.",
+                ai_rephrasing="KUWSDB ಗೆ ಮೊದಲೇ ಕಾಲ್ ಮಾಡಿದ್ದರೂ ಸ್ಪಂದನೆ ಇಲ್ಲ, ಮಗುವಿಗೆ ಜ್ವರ ಬೇರೆ ಇದೆ — ತುರ್ತಾಗಿ ಮೇಲಿನ ಅಧಿಕಾರಿಗಳಿಗೆ ದೂರು ಕಳಿಸ್ತೇನೆ.",
                 asr_confidence=1.0, verification_state="pending",
             ),
             Turn(
@@ -201,14 +202,14 @@ def build_demo_sessions() -> list[SessionState]:
             ),
             Turn(
                 turn_id="t3s3", timestamp=_ago(27), speaker="citizen",
-                raw_transcript="Atal Pension Yojana tha. Lekin kuch mahine pehle ek form bhar ke diya tha, tab se band ho gayi.",
+                raw_transcript="Sandhya Suraksha thi. Kuch mahine pehle ek form bhar ke diya tha, tab se band ho gayi. Mera Aadhaar 7741 8823 4415 linked hai, phir bhi nahi aayi.",
                 asr_confidence=0.76, detected_language="hi",
                 sentiment=TurnSentiment(label="urgency", intensity=0.44, text_component=0.42, prosodic_component=0.47),
                 verification_state="partially_correct",
             ),
             Turn(
                 turn_id="t4s3", timestamp=_ago(26), speaker="ai",
-                ai_rephrasing="अटल पेंशन योजना, फॉर्म भरने के बाद पेंशन बंद हुई — आपका आधार नंबर और बैंक खाता लिंक है?",
+                ai_rephrasing="संध्या सुरक्षा पेंशन, फॉर्म भरने के बाद बंद हुई — आधार लिंक है, फिर भी रुकी है — बैंक खाता किस बैंक में है?",
                 asr_confidence=1.0, verification_state="pending",
             ),
             Turn(
@@ -385,6 +386,77 @@ def build_demo_sessions() -> list[SessionState]:
     )
     sessions.append(s5)
 
+    # ── Session 6 ─ Hubballi-Dharwad ─ HESCOM wrong billing (PII redaction demo)
+    # Citizen volunteers name + phone in the first turn.
+    # raw_transcript carries the original PII; NLU receives a redacted copy
+    # (CITIZEN_NAME_1, PHONE_1) when PII_REDACTION_ENABLED=true.
+    s6 = SessionState(
+        session_id=DEMO_SESSION_IDS[5],
+        created_at=_ago(35),
+        district="hubballi_dharwad",
+        detected_language="kn",
+        dialect_tag="north_karnataka",
+        verification_state="escalated",
+        clarification_count=1,
+        is_escalated=True,
+        escalation_reason="repeated_clarification",
+        escalation_summary="HESCOM bill ₹8,400 vs meter reading 1847 units — office visit unresolved · PII redacted before NLU: CITIZEN_NAME_1 + PHONE_1",
+        final_intent="bescom_billing",
+        composite_confidence=0.67,
+        turns=[
+            Turn(
+                turn_id="t1s6", timestamp=_ago(34), speaker="citizen",
+                raw_transcript="ನನ್ನ ಹೆಸರು ರಮೇಶ ಪಾಟೀಲ್, ಮೊಬೈಲ್ 9844567890. ವಿದ್ಯಾನಗರ ಹುಬ್ಬಳ್ಳಿ ನಲ್ಲಿ ನಮ್ಮ HESCOM ಬಿಲ್ ₹8,400 ಬಂದಿದೆ, ಯಾವ್ತ್ತೂ ₹600 ಮೀರ್ತಿರ್ಲಿಲ್ಲ",
+                asr_confidence=0.89, detected_language="kn", intent="bescom_billing",
+                intent_entropy=0.28,
+                sentiment=TurnSentiment(label="calm", intensity=0.20, text_component=0.22, prosodic_component=0.17),
+                verification_state="pending",
+            ),
+            Turn(
+                turn_id="t2s6", timestamp=_ago(33), speaker="ai",
+                ai_rephrasing="ವಿದ್ಯಾನಗರ ಹುಬ್ಬಳ್ಳಿ ನಲ್ಲಿ HESCOM ಬಿಲ್ ₹8,400 ಬಂದಿದೆ, ಸಾಮಾನ್ಯ ₹600 ಬರ್ತಿತ್ತು ಅಂತ ಹೇಳ್ತಿದ್ದೀರಾ. ನಿಮ್ಮ ಮೀಟರ್ ರೀಡಿಂಗ್ ಬಿಲ್ ನಲ್ಲಿ ಬರ್ದ ಅಂಕಿ ಜೊತೆ ಹೊಂದ್ತಿದೆಯಾ?",
+                asr_confidence=1.0, verification_state="pending",
+            ),
+            Turn(
+                turn_id="t3s6", timestamp=_ago(32), speaker="citizen",
+                raw_transcript="ಇಲ್ಲ ಸ್ವಾಮಿ. ಮೀಟರ್ ಲ್ಲಿ 1847 ಯೂನಿಟ್ ತೋರ್ಸ್ತಿದೆ, ಬಿಲ್ ನಲ್ಲಿ 4200 ಅಂತ ಬಿಟ್ಟಿದ್ದಾರೆ. HESCOM ಕಚೇರಿಗೆ ಹೋಗಿದ್ದೆ, ಅವ್ರು ಕಂಪ್ಯೂಟರ್ ಎರರ್ ಅಂದ್ರು ಆದ್ರೆ ಕರೆಕ್ಟ್ ಮಾಡ್ಲಿಲ್ಲ",
+                asr_confidence=0.86, detected_language="kn", intent="bescom_billing",
+                intent_entropy=0.24,
+                sentiment=TurnSentiment(label="urgency", intensity=0.45, text_component=0.47, prosodic_component=0.42),
+                verification_state="pending",
+            ),
+            Turn(
+                turn_id="t4s6", timestamp=_ago(31), speaker="ai",
+                ai_rephrasing="ಮೀಟರ್ 1847 ಯೂನಿಟ್ ಆದ್ರೆ ಬಿಲ್ 4200 ಯೂನಿಟ್ ತೋರ್ಸ್ತಿದೆ — HESCOM ಕಚೇರಿ ಭೇಟಿ ಮಾಡಿದ್ರೂ ತಿದ್ದಲಿಲ್ಲ — ಇದು ಸರಿಯಾಗಿ ಹೇಳಿದ್ದೀನಾ?",
+                asr_confidence=1.0, verification_state="pending",
+            ),
+            Turn(
+                turn_id="t5s6", timestamp=_ago(30), speaker="citizen",
+                raw_transcript="ಹೌದ್ರಿ ಸರಿ ಹೇಳಿದ್ರಿ. ₹8,400 ಕಟ್ಟಲ್ಲ ಬಿಡ್ರಿ, ನಾನು 30 ವರ್ಷದಿಂದ ಅಲ್ಲಿದ್ದೇನೆ, ಬಿಲ್ ಕಟ್ಟೋ ರೆಕಾರ್ಡ್ ಇದೆ. ದೂರು ಕೊಡ್ರಿ",
+                asr_confidence=0.91, detected_language="kn",
+                sentiment=TurnSentiment(label="urgency", intensity=0.58, text_component=0.60, prosodic_component=0.55),
+                verification_state="correct",
+            ),
+            Turn(
+                turn_id="t6s6", timestamp=_ago(29), speaker="ai",
+                ai_rephrasing="30 ವರ್ಷದ ಉತ್ತಮ ಪಾವತಿ ದಾಖಲೆ ಇರುವ ನಿಮ್ಮ ಪ್ರಕರಣ HESCOM ಹಿರಿಯ ಅಧಿಕಾರಿ ಮತ್ತು ಕರ್ನಾಟಕ ವಿದ್ಯುತ್ ನಿಯಂತ್ರಣ ಆಯೋಗಕ್ಕೆ ದೂರು ಮಾಡ್ತೇನೆ.",
+                asr_confidence=1.0, verification_state="pending",
+            ),
+        ],
+        sentiment_timeline=[
+            {"turn_id": "t1s6", "timestamp": _ago(34).isoformat(), "label": "calm",    "intensity": 0.20},
+            {"turn_id": "t3s6", "timestamp": _ago(32).isoformat(), "label": "urgency", "intensity": 0.45},
+            {"turn_id": "t5s6", "timestamp": _ago(30).isoformat(), "label": "urgency", "intensity": 0.58},
+            {"turn_id": "t6s6", "timestamp": _ago(29).isoformat(), "label": "urgency", "intensity": 0.55},
+        ],
+        confidence_history=[
+            {"turn_id": "t1s6", "composite_score": 0.74, "asr_confidence": 0.89, "intent_entropy": 0.28},
+            {"turn_id": "t3s6", "composite_score": 0.70, "asr_confidence": 0.86, "intent_entropy": 0.24},
+            {"turn_id": "t5s6", "composite_score": 0.67, "asr_confidence": 0.91, "intent_entropy": 0.22},
+        ],
+    )
+    sessions.append(s6)
+
     return sessions
 
 
@@ -409,12 +481,12 @@ DEMO_TURN_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
             "hi": "बंदर रोड इलाके में पाइप टूट गया और पानी नहीं आ रहा, घर में शिशु है और पड़ोसियों को भी यही समस्या है — सही है?",
         },
         "t5s1": {
-            "en": "Yes, you've stated it correctly. But I had called BWSSB earlier and no one came. The baby has a fever and there's no water to drink.",
-            "hi": "हाँ, सही कहा। लेकिन मैंने पहले ही BWSSB को कॉल किया था, कोई नहीं आया। बच्चे को बुखार है और पीने का पानी नहीं है।",
+            "en": "Yes, you've stated it correctly. But I had called KUWSDB (Karnataka Urban Water Supply & Drainage Board) earlier and no one came. The baby has a fever and there's no water to drink.",
+            "hi": "हाँ, सही कहा। लेकिन मैंने पहले ही KUWSDB को कॉल किया था, कोई नहीं आया। बच्चे को बुखार है और पीने का पानी नहीं है।",
         },
         "t6s1": {
-            "en": "BWSSB was called earlier but there was no response, and the baby has a fever — I'm escalating this to senior authorities urgently.",
-            "hi": "BWSSB को पहले कॉल किया था लेकिन कोई प्रतिक्रिया नहीं, बच्चे को बुखार है — मैं इसे तुरंत वरिष्ठ अधिकारियों को भेज रहा हूँ।",
+            "en": "KUWSDB was called earlier but there was no response, and the baby has a fever — I'm escalating this to senior authorities urgently.",
+            "hi": "KUWSDB को पहले कॉल किया था लेकिन कोई प्रतिक्रिया नहीं, बच्चे को बुखार है — मैं इसे तुरंत वरिष्ठ अधिकारियों को भेज रहा हूँ।",
         },
         "t7s1": {
             "en": "Please do it quickly. We are suffering a lot. The baby is crying.",
@@ -441,8 +513,8 @@ DEMO_TURN_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
             "kn": "ನಿಮ್ಮ ಪೆನ್ಶನ್ ಕಳೆದ ಮೂರು ತಿಂಗಳಿಂದ ಬಂದಿಲ್ಲ ಮತ್ತು ನೀವು ಒಬ್ಬರೇ ಇದ್ದೀರಿ — ಯಾವ ಯೋಜನೆಯ ಅಡಿ ಪೆನ್ಶನ್ ಬರ್ತಿತ್ತು?",
         },
         "t4s3": {
-            "en": "Atal Pension Yojana, pension stopped after filling a form — is your Aadhaar number and bank account linked?",
-            "kn": "ಅಟಲ್ ಪೆನ್ಶನ್ ಯೋಜನೆ, ಫಾರ್ಮ್ ಭರಿಸಿದ ನಂತರ ಪೆನ್ಶನ್ ಬಂಧ ಆಗಿದೆ — ನಿಮ್ಮ ಆಧಾರ್ ಮತ್ತು ಬ್ಯಾಂಕ್ ಖಾತೆ ಲಿಂಕ್ ಆಗಿದೆಯಾ?",
+            "en": "Sandhya Suraksha pension, stopped after filling a form — Aadhaar is linked but pension still didn't arrive — which bank holds the account?",
+            "kn": "ಸಂಧ್ಯಾ ಸುರಕ್ಷಾ ಪೆನ್ಶನ್, ಫಾರ್ಮ್ ಭರಿಸಿದ ನಂತರ ಬಂಧ ಆಗಿದೆ — ಆಧಾರ್ ಲಿಂಕ್ ಇದ್ರೂ ಬಂದಿಲ್ಲ — ಯಾವ ಬ್ಯಾಂಕ್ ನಲ್ಲಿ ಖಾತೆ ಇದೆ?",
         },
         "t6s3": {
             "en": "You had filed two previous complaints — sent documents, visited the office — still no resolution — is that correct?",
@@ -457,8 +529,8 @@ DEMO_TURN_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
             "kn": "ಹೌದು, ನನ್ನ ಪೆನ್ಶನ್ ಮೂರು ತಿಂಗಳಿಂದ ಬಂದಿಲ್ಲ. ನನಗೆ 68 ವರ್ಷ, ಮನೆಯಲ್ಲಿ ಬೇರೆ ಯಾರೂ ಇಲ್ಲ.",
         },
         "t3s3": {
-            "en": "It was the Atal Pension Yojana. But a few months ago I filled out a form and submitted it, after that it stopped.",
-            "kn": "ಅಟಲ್ ಪೆನ್ಶನ್ ಯೋಜನೆ ಇತ್ತು. ಆದ್ರೆ ಕೆಲ ತಿಂಗಳ ಹಿಂದೆ ಒಂದು ಫಾರ್ಮ್ ಭರಿಸಿ ಕೊಟ್ಟಿದ್ದೆ, ಆಮೇಲೆ ಬಂಧ ಆಯ್ತು.",
+            "en": "It was Sandhya Suraksha. A few months ago I filled out a form and submitted it, after that it stopped. My Aadhaar [AADHAAR_1] is linked, but it still didn't come.",
+            "kn": "ಸಂಧ್ಯಾ ಸುರಕ್ಷಾ ಇತ್ತು. ಕೆಲ ತಿಂಗಳ ಹಿಂದೆ ಒಂದು ಫಾರ್ಮ್ ಭರಿಸಿ ಕೊಟ್ಟಿದ್ದೆ, ಆಮೇಲೆ ಬಂಧ ಆಯ್ತು. ಆಧಾರ್ ಲಿಂಕ್ ಇದೆ ಆದ್ರೂ ಬಂದಿಲ್ಲ.",
         },
         "t5s3": {
             "en": "Yes it's linked. I've already called twice before. Once they said send documents, I sent them. Then they said come to office, I went. Nothing worked.",
@@ -521,6 +593,32 @@ DEMO_TURN_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
             "hi": "बारिश और स्वास्थ्य जोखिम के कारण, मैं इसे BBMP के वरिष्ठ अधिकारियों को एक अत्यावश्यक शिकायत के रूप में भेज रहा हूँ।",
         },
     },
+    DEMO_SESSION_IDS[5]: {  # Hubballi — HESCOM wrong billing (PII redaction demo)
+        "t1s6": {
+            "en": "My name is Ramesh Patil, mobile 9844567890. In Vidyanagar Hubballi our HESCOM bill has come as ₹8,400 — it never exceeded ₹600.",
+            "hi": "मेरा नाम रमेश पाटील है, मोबाइल 9844567890. विद्यानगर हुब्बली में हमारा HESCOM बिल ₹8,400 आया है, कभी ₹600 नहीं पार किया था।",
+        },
+        "t2s6": {
+            "en": "You're saying the HESCOM bill in Vidyanagar Hubballi is ₹8,400 when it was normally ₹600. Does the meter reading match the figure on the bill?",
+            "hi": "आप कह रहे हैं कि विद्यानगर हुब्बली में HESCOM बिल ₹8,400 आया है जबकि सामान्यतः ₹600 आता था। क्या मीटर रीडिंग बिल में दिए गए नंबर से मेल खाती है?",
+        },
+        "t3s6": {
+            "en": "No sir. Meter shows 1847 units, but the bill says 4200. I went to the HESCOM office, they said it was a computer error but didn't correct it.",
+            "hi": "नहीं सर। मीटर 1847 यूनिट दिखाता है, लेकिन बिल में 4200 लिखा है। मैं HESCOM कार्यालय गया, उन्होंने कंप्यूटर एरर बताया लेकिन सुधारा नहीं।",
+        },
+        "t4s6": {
+            "en": "Meter reads 1847 units but bill shows 4200 — HESCOM office visit didn't get it corrected — have I understood correctly?",
+            "hi": "मीटर 1847 यूनिट है लेकिन बिल 4200 यूनिट दिखा रहा है — HESCOM कार्यालय जाने पर भी नहीं सुधरा — क्या मैंने सही समझा?",
+        },
+        "t5s6": {
+            "en": "Yes, that's right. I won't pay ₹8,400. I've been here 30 years, I have a record of bill payments. Please file a complaint.",
+            "hi": "हाँ, सही कहा। मैं ₹8,400 नहीं भरूँगा। मैं 30 साल से यहाँ हूँ, बिल भुगतान का रिकॉर्ड है। शिकायत दर्ज करें।",
+        },
+        "t6s6": {
+            "en": "Your case with 30 years of good payment record is being escalated to HESCOM senior officials and the Karnataka Electricity Regulatory Commission.",
+            "hi": "30 साल के अच्छे भुगतान रिकॉर्ड वाले आपके मामले को HESCOM वरिष्ठ अधिकारियों और कर्नाटक विद्युत नियामक आयोग को भेजा जा रहा है।",
+        },
+    },
 }
 
 
@@ -531,7 +629,7 @@ DEMO_QUEUE_ENTRIES = [
         "sentiment_intensity": 0.89,
         "sentiment": "distress",
         "reason": "high_distress",
-        "summary": "No water 5 days · infant sick · BWSSB unresponsive",
+        "summary": "No water 5 days · infant sick · KUWSDB unresponsive",
         "district": "mangaluru",
         "language": "kn",
         "final_intent": "water_supply_complaint",
@@ -575,5 +673,15 @@ DEMO_QUEUE_ENTRIES = [
         "district": "belagavi",
         "language": "kn",
         "final_intent": "sanitation_garbage",
+    },
+    {
+        "session_id": DEMO_SESSION_IDS[5],
+        "sentiment_intensity": 0.58,
+        "sentiment": "concerned",
+        "reason": "repeated_clarification",
+        "summary": "HESCOM bill ₹8,400 vs meter 1847 units · office visit failed · PII redacted",
+        "district": "hubballi_dharwad",
+        "language": "kn",
+        "final_intent": "bescom_billing",
     },
 ]
