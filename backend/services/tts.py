@@ -9,11 +9,11 @@ from models.session_model import Turn
 
 SARVAM_TTS_URL = "https://api.sarvam.ai/text-to-speech"
 
-# Speaker voices per language — adjust to Bulbul voice IDs when available
+# Speaker voices per language — valid Sarvam Bulbul voice IDs
 SPEAKER_MAP = {
     "kn": "meera",     # Kannada female voice
     "hi": "pavithra",  # Hindi female voice
-    "en": "maya",      # English female voice
+    "en": "pavithra",  # English — Sarvam uses pavithra for en-IN too
 }
 
 # Prosody presets per sentiment — calmer for distress
@@ -39,7 +39,9 @@ async def synthesize(
         return _mock_tts(text, language)
 
     prosody = PROSODY_MAP.get(sentiment_label, PROSODY_MAP["calm"])
-    speaker = SPEAKER_MAP.get(language, SPEAKER_MAP["en"])
+    # Normalize: "en-IN" → "en", "kn-IN" → "kn", "kn" → "kn"
+    base_lang = language.split("-")[0]
+    speaker = SPEAKER_MAP.get(base_lang, SPEAKER_MAP["en"])
 
     # ── REPLACE WITH REAL API ──────────────────────────────────────────────
     async with httpx.AsyncClient(timeout=15.0) as client:
@@ -47,7 +49,7 @@ async def synthesize(
             SARVAM_TTS_URL,
             json={
                 "inputs":            [text],
-                "target_language_code": language + "-IN",
+                "target_language_code": base_lang + "-IN",
                 "speaker":           speaker,
                 "model":             settings.sarvam_tts_model,
                 "pace":              prosody["pace"],
@@ -58,6 +60,8 @@ async def synthesize(
             },
             headers={"api-subscription-key": settings.sarvam_api_key},
         )
+        if not resp.is_success:
+            print(f"[TTS] Sarvam error {resp.status_code}: {resp.text}")
         resp.raise_for_status()
         body = resp.json()
 

@@ -132,14 +132,21 @@ def _mock_asr(language: str) -> ASRResult:
             ("ನನ್ನ ಮನೆಯ ಬಳಿ ಕಸ ತೆಗೆಯುತ್ತಿಲ್ಲ ಎರಡು ವಾರದಿಂದ", 0.91),
             ("ನೀರು ಸರಬರಾಜು ನಿಂತಿದೆ ಮೂರು ದಿನದಿಂದ", 0.87),
             ("ರಸ್ತೆಯಲ್ಲಿ ದೊಡ್ಡ ಗುಂಡಿ ಬಿದ್ದಿದೆ", 0.82),
+            # PII-containing: citizen volunteers name + phone (common in real 1092 calls)
+            ("ನನ್ನ ಹೆಸರು ರಮೇಶ ಪಾಟೀಲ್, ಮೊಬೈಲ್ 9844567890. ವಿದ್ಯಾನಗರ ಹುಬ್ಬಳ್ಳಿ ನಲ್ಲಿ HESCOM ಬಿಲ್ ₹8,400 ಬಂದಿದೆ, ಯಾವ್ತ್ತೂ ₹600 ಮೀರ್ತಿರ್ಲಿಲ್ಲ", 0.88),
+            ("ಶ್ರೀಮತಿ ಲಕ್ಷ್ಮೀ ದೇವಿ ಇಲ್ಲಿಂದ ಕರೀತಿದ್ದೇನೆ, 14ನೇ ಕ್ರಾಸ್ ಕೆಶ್ವಾಪುರ. ಸಂಧ್ಯಾ ಸುರಕ್ಷಾ ಪಿಂಚಣಿ ಆರು ತಿಂಗಳಿಂದ ಬಂದಿಲ್ಲ", 0.84),
         ],
         "hi": [
             ("मेरे घर के पास कचरा नहीं उठाया जा रहा है", 0.88),
             ("बिजली तीन दिन से नहीं है", 0.85),
+            # PII-containing: name, phone, address common in Hindi pension/utility calls
+            ("मेरा नाम सुरेश कुमार है, मोबाइल 9741234567. कलबुर्गी में संध्या सुरक्षा पेंशन तीन महीने से नहीं आई, मकान नंबर 23 साईं नगर", 0.83),
         ],
         "en": [
             ("Garbage has not been collected for two weeks near my house", 0.93),
             ("Water supply has been cut off for three days", 0.90),
+            # PII-containing: Aadhaar + phone + address in English 1092 call
+            ("My name is Kavitha Reddy and my number is 9886012345. I live at 7th Main Koramangala Bangalore. BWSSB water account shows wrong name after my Aadhaar 4321 6789 0123 was linked", 0.91),
         ],
     }
     choices = samples.get(language, samples["en"])
