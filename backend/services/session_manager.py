@@ -68,6 +68,31 @@ async def delete_session(session_id: str) -> None:
     _memory_store.pop(session_id, None)
 
 
+_idempotency_store: dict[str, dict] = {}
+_IDEMPOTENCY_TTL = 300  # 5 minutes
+
+
+async def get_idempotency(key: str) -> dict | None:
+    if _use_redis and _redis_client:
+        try:
+            data = await _redis_client.get(f"idem:{key}")
+            if data:
+                return json.loads(data)
+        except Exception:
+            pass
+    return _idempotency_store.get(key)
+
+
+async def set_idempotency(key: str, value: dict) -> None:
+    if _use_redis and _redis_client:
+        try:
+            await _redis_client.setex(f"idem:{key}", _IDEMPOTENCY_TTL, json.dumps(value))
+            return
+        except Exception:
+            pass
+    _idempotency_store[key] = value
+
+
 async def health_check() -> dict:
     status = {"redis": "disconnected", "memory_sessions": len(_memory_store)}
     if _use_redis and _redis_client:
