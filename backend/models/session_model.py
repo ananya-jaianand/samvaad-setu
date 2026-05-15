@@ -18,9 +18,9 @@ class TurnSentiment(BaseModel):
     text_component: float = 0.0
 
 class Turn(BaseModel):
+    speaker: Literal["citizen", "ai", "agent"]
     turn_id: str = Field(default_factory=lambda: str(uuid.uuid4())[:8])
     timestamp: datetime = Field(default_factory=datetime.utcnow)
-    speaker: Literal["citizen", "ai", "agent"]
     raw_transcript: str = ""
     asr_confidence: float = 1.0
     detected_language: str = "kn"

@@ -130,6 +130,7 @@ async def extract_intent_and_rephrase(
         return _mock_nlu(transcript, session.detected_language)
 
 
+
 async def generate_escalation_summary(session: SessionState) -> str:
     """
     One-line context summary for the human agent. Runs once at escalation.

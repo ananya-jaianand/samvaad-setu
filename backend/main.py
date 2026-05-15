@@ -11,11 +11,14 @@ from typing import Optional, AsyncIterator
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+
 
 from config import settings, SUPPORTED_LANGUAGES
 from models.session_model import SessionState, Turn, TurnSentiment, EscalationPacket
 from services import asr, nlu, tts, sentiment, verification, escalation
 from services import session_manager
+from services import ticket_manager
 from services.verification_engine import VerificationEngine
 from services.confidence_scorer import build_score
 from middleware.latency import LatencyMiddleware, track, get_stats
@@ -33,11 +36,24 @@ _taxonomy = IntentTaxonomy()
 
 _verification_engine = VerificationEngine()
 
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+try:
+    from models.intent.ambiguity_detector import SemanticAmbiguityDetector
+    _ambiguity_detector = SemanticAmbiguityDetector()
+except Exception as e:
+    print(f"[STARTUP] Could not load SemanticAmbiguityDetector: {e}")
+    _ambiguity_detector = None
+
 app = FastAPI(
     title="Samvaad-Setu API",
     description="Real-time multilingual voice assistant for Karnataka 1092 helpline",
     version="0.1.0",
 )
+
+# Mount static directory for UI dashboards
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 @app.on_event("startup")
@@ -160,6 +176,13 @@ async def get_session(session_id: str):
     if not session:
         raise HTTPException(404, "Session not found")
     return session.model_dump()
+
+
+@app.get("/api/tickets")
+async def get_tickets():
+    """Retrieve all auto-generated grievance tickets."""
+    return ticket_manager.get_all_tickets()
+
 
 
 @app.get("/sessions/{session_id}/escalation-packet")
@@ -710,6 +733,34 @@ async def _handle_audio_turn(websocket: WebSocket, session: SessionState, msg: d
         nlu_result = await nlu.extract_intent_and_rephrase(asr_result.transcript, session)
     print(f"[NLU] Result - Intent: {nlu_result.get('intent')}, Confidence: {nlu_result.get('intent_confidence')}")
 
+    # ── 2.5. Semantic Ambiguity Detection ──────────────────────────────────
+    if _ambiguity_detector:
+        print(f"[AMBIGUITY] Running Semantic Ambiguity Detector (5s timeout)...")
+        try:
+            # Run the PyTorch model in a background thread with a 5-second timeout
+            task = asyncio.to_thread(_ambiguity_detector.analyze, asr_result.transcript)
+            ambiguity_res = await asyncio.wait_for(task, timeout=5.0)
+            
+            # Compare and take the max entropy
+            gemini_entropy = nlu_result.get("intent_entropy", 0.0)
+            model_entropy = ambiguity_res.get("ambiguity_score", 0.0)
+            
+            if model_entropy > gemini_entropy:
+                nlu_result["intent_entropy"] = model_entropy
+                print(f"[AMBIGUITY] Overrode LLM entropy ({gemini_entropy}) with higher model score ({model_entropy})")
+            else:
+                print(f"[AMBIGUITY] Kept LLM entropy ({gemini_entropy}) as it was higher than model score ({model_entropy})")
+            
+            # If the model explicitly flags it, we can force a high entropy to trigger escalation
+            if ambiguity_res.get("requires_clarification"):
+                nlu_result["intent_entropy"] = max(nlu_result.get("intent_entropy", 0.0), 0.85)
+                print(f"[AMBIGUITY] Flagged for clarification, boosting entropy!")
+                
+        except asyncio.TimeoutError:
+            print(f"[AMBIGUITY] Model timed out after 5s, falling back to LLM score.")
+        except Exception as e:
+            print(f"[AMBIGUITY] Failed to run detector, falling back to LLM score: {e}")
+
     # ── 3. Sentiment ───────────────────────────────────────────────────────
     print(f"[SENTIMENT] Starting analysis...")
     async with track("sentiment"):
@@ -919,6 +970,13 @@ async def _handle_verification_turn(websocket: WebSocket, session: SessionState,
             "tts_audio_b64": tts_audio,
             "session_id": session.session_id,
         })
+        
+        # --- AUTO-TICKET GENERATOR ---
+        print(f"[TICKET] Verification successful. Generating ticket draft via Gemini...")
+        ticket_draft = await nlu.generate_ticket_draft(session)
+        phone = session.citizen_turns()[0].raw_transcript[:10] if session.citizen_turns() else "Unknown"
+        ticket_manager.save_ticket(session.session_id, ticket_draft, phone_number=phone)
+        print(f"[TICKET] Successfully generated and stored ticket for {session.session_id}")
 
     elif state in ("partially_correct", "incorrect"):
         session.clarification_count += 1
