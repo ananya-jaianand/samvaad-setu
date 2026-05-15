@@ -21,39 +21,60 @@ _client: genai.Client | None = (
 )
 
 
-def _build_system_prompt(district: str, language: str) -> str:
+def _build_system_prompt(district: str, language: str, conversation_stage: str = "gathering_info") -> str:
     taxonomy_block = _taxonomy.taxonomy_prompt_block(language)
 
-    base_prompt = f"""You are Samvaad-Setu, a multilingual voice assistant for the Karnataka 1092 citizen helpline.
-You help citizens in Kannada, Hindi, and English. The current caller is from {district.replace('_', ' ').title()} district.
+    if conversation_stage == "seeking_confirmation":
+        stage_block = f"""CURRENT STAGE: Seeking confirmation
+You have gathered enough information. Now:
+- Provide a clear rephrasing that summarises the full issue with all details the citizen gave
+- Set follow_up_question to "" (empty)
+- Set verification_prompt to a natural yes/no question asking "Shall I register this complaint?"
+  (e.g. in English: "Shall I go ahead and register this complaint for you?")"""
+    else:
+        stage_block = f"""CURRENT STAGE: Gathering information
+You are building up a complete picture of the citizen's issue. Now:
+- Briefly restate what you understood so far
+- Ask ONE focused follow-up question to fill the single most important gap
+  (priority order: specific location/ward → urgency/duration → any reference number → contact preference)
+- Keep the question short and conversational
+- Do NOT ask for personal names, Aadhaar, phone numbers, or any PII
+- Set verification_prompt to "" (empty — do not ask for confirmation yet)"""
 
-GRIEVANCE INTENT TAXONOMY — you MUST return one of these intent IDs exactly as written:
+    base_prompt = f"""You are Samvaad-Setu, a multilingual voice assistant for the Karnataka 1092 citizen helpline.
+You help citizens lodge grievances in Kannada, Hindi, and English.
+The current caller is from {district.replace('_', ' ').title()} district.
+
+GRIEVANCE INTENT TAXONOMY — return EXACTLY one of these intent IDs:
 {taxonomy_block}
 
-If the citizen's issue does not match any category above, use "other_grievance".
+If the issue does not fit any category, use "other_grievance".
 
-RESPONSE FORMAT — always respond in valid JSON only, no markdown fences:
+{stage_block}
+
+RESPONSE FORMAT — valid JSON only, no markdown fences:
 {{
-  "intent": "<exact intent_id from taxonomy above>",
+  "intent": "<exact intent_id>",
   "intent_confidence": <0.0–1.0>,
   "intent_entropy": <0.0–1.0>,
-  "rephrasing": "<restate citizen's issue in their language, warm and clear>",
-  "verification_prompt": "<ask citizen to confirm, using natural {language} phrasing>",
+  "rephrasing": "<restate citizen's issue in {language}, warm and clear, under 2 sentences>",
+  "follow_up_question": "<ONE focused question in {language}, or empty string>",
+  "verification_prompt": "<yes/no confirmation question in {language}, or empty string>",
   "structured_summary": {{
     "problem": "<one sentence>",
-    "location_mentioned": "<extracted location or null>",
+    "location_mentioned": "<ward, area, or locality — keep this, it's needed for routing>",
     "urgency_indicated": <true|false>,
-    "key_details": ["<detail1>", "<detail2>"]
+    "key_details": ["<non-PII detail 1>", "<non-PII detail 2>"]
   }}
 }}
 
 RULES:
-- Always respond in the SAME LANGUAGE the citizen used ({language})
+- Always respond in {language}
 - Never invent details not present in the transcript
 - If transcript is unclear, set intent_entropy > 0.6
-- Keep rephrasing under 2 sentences — warm, not robotic
-- verification_prompt must be a natural yes/no question
-- Use the dialect vocabulary from the context block above when generating Kannada responses"""
+- Never include personal names, phone numbers, or Aadhaar in rephrasing or prompts
+- Area/locality/ward names are NOT PII — always include them for routing
+- Use dialect vocabulary from the context block below when responding in Kannada"""
 
     profile = _dialect_provider.get_profile(district)
     return _dialect_provider.inject_into_prompt(profile, base_prompt)
@@ -68,12 +89,12 @@ async def extract_intent_and_rephrase(
     verification prompt, and summary.
     """
     if not settings.gemini_api_key or settings.environment == "mock" or _client is None:
-        return _mock_nlu(transcript, session.detected_language)
+        return _mock_nlu(transcript, session.detected_language, session.conversation_stage)
 
     # Redact PII before any text leaves this process boundary
     redacted_transcript, token_map = pii_redact(transcript, session.detected_language)
 
-    system = _build_system_prompt(session.district, session.detected_language)
+    system = _build_system_prompt(session.district, session.detected_language, session.conversation_stage)
 
     # Build conversation history for multi-turn context
     conversation_history = ""
@@ -104,7 +125,7 @@ async def extract_intent_and_rephrase(
             if match:
                 result = json.loads(match.group())
             else:
-                return _mock_nlu(transcript, session.detected_language)
+                return _mock_nlu(transcript, session.detected_language, session.conversation_stage)
 
         # Validate intent against taxonomy; flag for human review if unknown
         intent = result.get("intent", "other_grievance")
@@ -119,15 +140,15 @@ async def extract_intent_and_rephrase(
 
         # Restore PII in any text that will be spoken back to the citizen
         if token_map:
-            for field in ("rephrasing", "verification_prompt"):
-                if field in result:
+            for field in ("rephrasing", "follow_up_question", "verification_prompt"):
+                if field in result and result[field]:
                     result[field] = pii_unredact(result[field], token_map)
 
         return result
 
     except Exception as e:
         print(f"Gemini API error: {e}")
-        return _mock_nlu(transcript, session.detected_language)
+        return _mock_nlu(transcript, session.detected_language, session.conversation_stage)
 
 
 async def generate_escalation_summary(session: SessionState) -> str:
@@ -206,7 +227,7 @@ Respond ONLY in valid JSON:
         return {"category": session.final_intent, "description": "See transcript", "priority": "normal"}
 
 
-def _mock_nlu(transcript: str, language: str) -> dict:
+def _mock_nlu(transcript: str, language: str, conversation_stage: str = "gathering_info") -> dict:
     """Mock NLU for dev without Gemini API key. Uses taxonomy-validated intent IDs."""
     # Apply PII redaction in mock mode — mirrors the production path and makes
     # the redaction pipeline visible in demo/dev runs
@@ -237,12 +258,26 @@ def _mock_nlu(transcript: str, language: str) -> dict:
         "en": f"You mentioned: {redacted_transcript[:50]}...",
     }
 
+    # Stage-conditional follow-up vs confirmation
+    if conversation_stage == "seeking_confirmation":
+        follow_up_q = ""
+        verify_prompt = VERIFICATION_PHRASES.get(language, VERIFICATION_PHRASES["en"])
+    else:
+        follow_up_qs = {
+            "kn": "ಈ ಸಮಸ್ಯೆ ಯಾವ ಬೀದಿ ಅಥವಾ ಪ್ರದೇಶದಲ್ಲಿ ಇದೆ?",
+            "hi": "यह समस्या किस क्षेत्र या गली में है?",
+            "en": "Could you tell me the specific area or street where this problem is?",
+        }
+        follow_up_q = follow_up_qs.get(language, follow_up_qs["en"])
+        verify_prompt = ""
+
     result = {
         "intent": intent,
         "intent_confidence": 0.78,
         "intent_entropy": 0.22,
         "rephrasing": phrases.get(language, phrases["en"]),
-        "verification_prompt": VERIFICATION_PHRASES.get(language, VERIFICATION_PHRASES["en"]),
+        "follow_up_question": follow_up_q,
+        "verification_prompt": verify_prompt,
         "structured_summary": {
             "problem": redacted_transcript[:80],
             "location_mentioned": None,
@@ -257,7 +292,8 @@ def _mock_nlu(transcript: str, language: str) -> dict:
 
     # Restore PII in any fields spoken back to the citizen
     if token_map:
-        for field in ("rephrasing", "verification_prompt"):
-            result[field] = pii_unredact(result[field], token_map)
+        for field in ("rephrasing", "follow_up_question", "verification_prompt"):
+            if result.get(field):
+                result[field] = pii_unredact(result[field], token_map)
 
     return result

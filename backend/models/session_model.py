@@ -6,6 +6,7 @@ import uuid
 SentimentClass = Literal["distress", "anger", "fear", "urgency", "confusion", "calm"]
 VerificationState = Literal["correct", "partially_correct", "incorrect", "pending"]
 SessionVerificationState = Literal["pending", "confirmed", "partial", "rejected", "escalated"]
+ConversationStage = Literal["gathering_info", "seeking_confirmation", "confirmed_ready", "ended"]
 EscalationReason = Literal[
     "high_distress", "low_asr_confidence", "high_intent_entropy",
     "low_confidence", "repeated_clarification", "explicit_request", "none"
@@ -46,6 +47,12 @@ class SessionState(BaseModel):
     final_intent: Optional[str] = None
     composite_confidence: float = 1.0
     is_resolved: bool = False                  # set by agent via POST /sessions/{id}/resolve
+
+    # Language — user_language is the UI-selected language and never overridden by ASR
+    user_language: str = ""
+
+    # Multi-turn conversation stage
+    conversation_stage: ConversationStage = "gathering_info"
 
     # Running timelines (for agent dashboard)
     sentiment_timeline: list[dict] = []

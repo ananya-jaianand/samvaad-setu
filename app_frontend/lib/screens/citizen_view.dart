@@ -398,6 +398,19 @@ class _CitizenViewState extends State<CitizenView>
                         fontFamily: _fontFamily,
                         onClose: () => setState(() => _showHelp = false),
                       ),
+
+                    // Feedback overlay — shown after End Call, before connection closes
+                    StreamBuilder<Map<String, dynamic>?>(
+                      stream: _svc.feedbackStream,
+                      builder: (ctx, fbSnap) {
+                        if (fbSnap.data == null) return const SizedBox.shrink();
+                        return _FeedbackOverlay(
+                          lang: _lang,
+                          fontFamily: _fontFamily,
+                          onRate: (rating) => _svc.submitFeedbackAndEnd(rating),
+                        );
+                      },
+                    ),
                   ],
                 );
               },
@@ -1489,6 +1502,134 @@ class _DotMotifPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter old) => false;
+}
+
+// ─── Feedback overlay — star rating shown after End Call ─────────────────────
+
+class _FeedbackOverlay extends StatefulWidget {
+  final String lang;
+  final String fontFamily;
+  final void Function(int rating) onRate;
+
+  const _FeedbackOverlay(
+      {required this.lang, required this.fontFamily, required this.onRate});
+
+  @override
+  State<_FeedbackOverlay> createState() => _FeedbackOverlayState();
+}
+
+class _FeedbackOverlayState extends State<_FeedbackOverlay> {
+  int _hovered = 0;
+  bool _submitted = false;
+
+  static const _labels = {
+    'kn': (
+      title: 'ನಿಮ್ಮ ಅನುಭವ ರೇಟ್ ಮಾಡಿ',
+      submitted: 'ಧನ್ಯವಾದ!',
+      closing: 'ಕರೆ ಮುಗಿಯುತ್ತಿದೆ…',
+    ),
+    'hi': (
+      title: 'अपना अनुभव रेट करें',
+      submitted: 'धन्यवाद!',
+      closing: 'कॉल बंद हो रही है…',
+    ),
+    'en': (
+      title: 'Rate your experience',
+      submitted: 'Thank you!',
+      closing: 'Closing call…',
+    ),
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final lbl = _labels[widget.lang] ?? _labels['en']!;
+    return Positioned.fill(
+      child: Container(
+        color: Colors.black.withValues(alpha: 0.55),
+        child: Center(
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 32),
+            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+            decoration: BoxDecoration(
+              color: AppTheme.ivory,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.18),
+                  blurRadius: 24,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: _submitted
+                ? Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.check_circle_outline,
+                          color: AppTheme.teal, size: 48),
+                      const SizedBox(height: 12),
+                      Text(lbl.submitted,
+                          style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w600,
+                              fontFamily: widget.fontFamily,
+                              color: AppTheme.ink)),
+                      const SizedBox(height: 6),
+                      Text(lbl.closing,
+                          style: TextStyle(
+                              fontSize: 13,
+                              color: AppTheme.muted,
+                              fontFamily: widget.fontFamily)),
+                    ],
+                  )
+                : Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        lbl.title,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w600,
+                          fontFamily: widget.fontFamily,
+                          color: AppTheme.ink,
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: List.generate(5, (i) {
+                          final star = i + 1;
+                          return GestureDetector(
+                            onTap: () {
+                              setState(() => _submitted = true);
+                              widget.onRate(star);
+                            },
+                            child: MouseRegion(
+                              onEnter: (_) => setState(() => _hovered = star),
+                              onExit: (_) => setState(() => _hovered = 0),
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 6),
+                                child: Icon(
+                                  (_hovered > 0 ? star <= _hovered : false)
+                                      ? Icons.star
+                                      : Icons.star_border,
+                                  size: 40,
+                                  color: AppTheme.saffron,
+                                ),
+                              ),
+                            ),
+                          );
+                        }),
+                      ),
+                    ],
+                  ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 // ─── Extension helper ─────────────────────────────────────────────────────────

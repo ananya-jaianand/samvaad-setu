@@ -117,6 +117,8 @@ async def create_session(
             return cached
 
     session = await session_manager.create_session(district=district, language=language)
+    session.user_language = language  # preserve UI-selected language throughout session
+    await session_manager.save_session(session)
     response = {"session_id": session.session_id, "district": district, "language": language}
 
     if idempotency_key:
@@ -666,6 +668,16 @@ async def voice_pipeline(websocket: WebSocket, session_id: str):
                     await _handle_verification_turn(websocket, session, msg)
                 await session_manager.save_session(session)
 
+            elif msg_type == "end_call":
+                print(f"[WS] Processing end_call...")
+                await _handle_end_call(websocket, session)
+                await session_manager.save_session(session)
+
+            elif msg_type == "feedback":
+                print(f"[WS] Processing feedback...")
+                await _handle_feedback(websocket, session, msg)
+                await session_manager.save_session(session)
+
             elif msg_type == "agent_correction":
                 print(f"[WS] Processing agent correction...")  # Debug log
                 # Agent edits AI interpretation inline
@@ -683,8 +695,8 @@ async def voice_pipeline(websocket: WebSocket, session_id: str):
         unregister_citizen(session_id)
         remove_active_session(session_id)
         await broadcast_to_agents({"type": "session_ended", "session_id": session_id})
-        # Silently ensure a ticket exists for any session that had activity
-        if session.turns:
+        # Silently ensure a ticket exists if the call ended without going through end_call flow
+        if session.turns and session.conversation_stage not in ("ended",):
             try:
                 await ticket_service.create_ticket(session, "call_ended")
             except Exception:
@@ -695,8 +707,14 @@ async def voice_pipeline(websocket: WebSocket, session_id: str):
 async def _handle_audio_turn(websocket: WebSocket, session: SessionState, msg: dict):
     """Full pipeline: audio → ASR → NLU → Sentiment → Escalation check → TTS → respond."""
     audio_b64: str = msg.get("data", "")
-    language:  str = msg.get("language", session.detected_language)
-    district:  str = msg.get("district", session.district)
+    msg_language: str = msg.get("language", session.detected_language)
+    district:     str = msg.get("district", session.district)
+
+    # Preserve user's explicitly chosen language — set once on first audio turn if not
+    # already stored, then always use it so ASR detection never overrides the UI selection.
+    if not session.user_language:
+        session.user_language = msg_language
+    language = session.user_language
 
     print(f"[AUDIO] Language: {language}, District: {district}")
     print(f"[AUDIO] Audio data length: {len(audio_b64)}")
@@ -725,25 +743,32 @@ async def _handle_audio_turn(websocket: WebSocket, session: SessionState, msg: d
     print(f"[ASR] Result: {asr_result.transcript[:50]}... (confidence: {asr_result.confidence})")
     print(f"[ASR] Detected language: {asr_result.language}")
 
-    # Update session language based on ASR detection
+    # ASR detected language is a hint for transcription quality logging only.
+    # We do NOT override the user's selected language for NLU/TTS.
     if asr_result.language:
-        session.detected_language = asr_result.language
-        language = asr_result.language  # use detected language for all downstream steps
-        print(f"[SESSION] Updated language to: {asr_result.language}")
+        print(f"[ASR] Detected language hint: {asr_result.language} (user selected: {language})")
 
-    # ── 2. NLU (Gemini) ────────────────────────────────────────────────────
+    # ── 2. Advance conversation stage before NLU so prompt is correct ─────
+    # After the citizen's first turn, the AI asks a follow-up. From the second
+    # turn onward, the AI moves to confirmation (seeking_confirmation).
+    if (session.conversation_stage == "gathering_info"
+            and len(session.citizen_turns()) >= 1):
+        session.conversation_stage = "seeking_confirmation"
+        print(f"[STAGE] Advanced to seeking_confirmation")
+
+    # ── 3. NLU (Gemini) ────────────────────────────────────────────────────
     print(f"[NLU] Starting intent extraction for: {asr_result.transcript[:50]}...")
     async with track("nlu"):
         nlu_result = await nlu.extract_intent_and_rephrase(asr_result.transcript, session)
     print(f"[NLU] Result - Intent: {nlu_result.get('intent')}, Confidence: {nlu_result.get('intent_confidence')}")
 
-    # ── 3. Sentiment ───────────────────────────────────────────────────────
+    # ── 4. Sentiment ───────────────────────────────────────────────────────
     print(f"[SENTIMENT] Starting analysis...")
     async with track("sentiment"):
         sentiment_result = await sentiment.analyze(asr_result.transcript, audio_bytes, language)
     print(f"[SENTIMENT] Result - Label: {sentiment_result.label}, Intensity: {sentiment_result.intensity}")
 
-    # ── 4. Build citizen turn ──────────────────────────────────────────────
+    # ── 5. Build citizen turn ──────────────────────────────────────────────
     citizen_turn = Turn(
         speaker="citizen",
         raw_transcript=asr_result.transcript,
@@ -764,18 +789,6 @@ async def _handle_audio_turn(websocket: WebSocket, session: SessionState, msg: d
     sentiment_label = citizen_turn.sentiment.label if citizen_turn.sentiment else "unknown"
     print(f"[TURN] Added citizen turn - Intent: {citizen_turn.intent}, Sentiment: {sentiment_label}")
 
-    # ── 5. Verification prompt (citizen must confirm before intent is committed) ──
-    print(f"[VERIFICATION] Generating dialect-aware verification prompt...")
-    async with track("verification"):
-        verification_prompt_text = _verification_engine.generate_verification_prompt(
-            intent=citizen_turn.intent or "other_grievance",
-            entities=nlu_result.get("entities", {}),
-            language=language,
-            district=district,
-        )
-        session.verification_state = "pending"
-    print(f"[VERIFICATION] Prompt: {verification_prompt_text}")
-
     # ── 6. Escalation check ────────────────────────────────────────────────
     print(f"[ESCALATION] Evaluating escalation...")
     esc_decision = escalation.evaluate(
@@ -787,12 +800,30 @@ async def _handle_audio_turn(websocket: WebSocket, session: SessionState, msg: d
     session.composite_confidence = 1.0 - esc_decision.composite_score
     print(f"[ESCALATION] Should escalate: {esc_decision.should_escalate}, Composite confidence: {session.composite_confidence}")
 
-    # ── 7. Build AI verification turn ──────────────────────────────────────
-    verification_text = (
-        nlu_result.get("rephrasing", "") + " " +
-        nlu_result.get("verification_prompt", "")
-    )
-    print(f"[TTS] Synthesizing verification text: {verification_text[:100]}...")
+    # ── 7. Build AI response text based on conversation stage ──────────────
+    # gathering_info  → rephrasing + follow-up question (no confirm buttons)
+    # seeking_confirmation → rephrasing + confirmation question (show buttons)
+    if session.conversation_stage == "seeking_confirmation":
+        verification_prompt_text = _verification_engine.generate_verification_prompt(
+            intent=citizen_turn.intent or "other_grievance",
+            entities=nlu_result.get("entities", {}),
+            language=language,
+            district=district,
+        )
+        session.verification_state = "pending"
+        verification_text = " ".join(filter(None, [
+            nlu_result.get("rephrasing", ""),
+            nlu_result.get("verification_prompt", "") or verification_prompt_text,
+        ]))
+    else:
+        # gathering_info: ask follow-up, don't show confirm buttons
+        verification_prompt_text = ""
+        verification_text = " ".join(filter(None, [
+            nlu_result.get("rephrasing", ""),
+            nlu_result.get("follow_up_question", ""),
+        ]))
+
+    print(f"[TTS] Synthesizing AI response: {verification_text[:100]}...")
 
     tts_audio = ""
     try:
@@ -901,15 +932,21 @@ async def _handle_audio_turn(websocket: WebSocket, session: SessionState, msg: d
         },
     })
 
-    # Send dedicated verification_prompt so the UI can render the confirm/deny buttons
-    await websocket.send_json({
-        "type": "verification_prompt",
-        "text": verification_prompt_text,
-        "language": language,
-        "district": district,
-        "session_id": session.session_id,
-    })
-    print(f"[WS] verification_prompt sent")
+    # Only send verification_prompt (shows Yes/Partly/No buttons) when we're
+    # ready to ask for confirmation. In gathering_info stage, the citizen just
+    # continues speaking — no button panel needed.
+    if session.conversation_stage == "seeking_confirmation" and verification_prompt_text:
+        await websocket.send_json({
+            "type": "verification_prompt",
+            "text": verification_prompt_text,
+            "language": language,
+            "district": district,
+            "session_id": session.session_id,
+            "conversation_stage": session.conversation_stage,
+        })
+        print(f"[WS] verification_prompt sent (seeking confirmation)")
+    else:
+        print(f"[WS] Skipped verification_prompt — stage: {session.conversation_stage}")
     
     # ── 8. Handle escalation if needed ─────────────────────────────────────
     if esc_decision.should_escalate:
@@ -998,6 +1035,9 @@ async def _handle_verification_response(websocket: WebSocket, session: SessionSt
     action = result["action"]
 
     if action == "confirmed":
+        # Citizen confirmed — move to confirmed_ready. Ticket is created only when
+        # they explicitly end the call, so they can still add information.
+        session.conversation_stage = "confirmed_ready"
         ack_text = verification.get_acknowledgment(language, session.final_intent or "other_grievance")
         tts_audio = ""
         try:
@@ -1012,23 +1052,13 @@ async def _handle_verification_response(websocket: WebSocket, session: SessionSt
             "ai_response": ack_text,
             "tts_audio_b64": tts_audio,
             "session_id": session.session_id,
+            "conversation_stage": "confirmed_ready",
         })
-        print(f"[VERIFICATION] Confirmed — intent committed: {session.final_intent}")
+        print(f"[VERIFICATION] Confirmed — waiting for end_call to create ticket. Intent: {session.final_intent}")
         await log_event(
             session.session_id, "verification_confirmed", actor="citizen",
             payload={"intent": session.final_intent, "clarification_count": session.clarification_count},
         )
-        await write_verified_interaction(session)
-
-        # Create ticket and notify citizen inline
-        ticket_info = await ticket_service.create_ticket(session, "confirmed")
-        try:
-            await websocket.send_json({
-                "type": "ticket_created",
-                "ticket": ticket_info.model_dump(mode="json"),
-            })
-        except Exception:
-            pass
 
     elif action == "clarify":
         clarify_text = result["clarification_prompt"]
@@ -1091,6 +1121,95 @@ async def _handle_agent_correction(websocket: WebSocket, session: SessionState, 
         "turn_id": turn_id,
         "session_id": session.session_id,
     })
+
+
+async def _handle_end_call(websocket: WebSocket, session: SessionState):
+    """
+    Citizen tapped End Call.
+    1. Say "hold a moment…"  2. Create ticket  3. Ask for feedback rating.
+    """
+    language = session.user_language or session.detected_language
+
+    # Step 1 — "hold a moment"
+    hold_text = verification.get_end_call_message(language)
+    hold_audio = ""
+    try:
+        hold_audio = await tts.synthesize(hold_text, language=language)
+    except Exception:
+        pass
+    ai_turn = Turn(speaker="ai", raw_transcript=hold_text, tts_audio_b64=hold_audio)
+    session.add_turn(ai_turn)
+    await websocket.send_json({
+        "type": "hold_on",
+        "ai_response": hold_text,
+        "tts_audio_b64": hold_audio,
+    })
+
+    # Step 2 — create ticket
+    ticket_info = await ticket_service.create_ticket(session, "confirmed")
+    await write_verified_interaction(session)
+    session.conversation_stage = "ended"
+    await log_event(
+        session.session_id, "call_ended", actor="citizen",
+        payload={"intent": session.final_intent, "ticket_id": getattr(ticket_info, "ticket_id", None)},
+    )
+
+    try:
+        await websocket.send_json({
+            "type": "ticket_created",
+            "ticket": ticket_info.model_dump(mode="json"),
+        })
+    except Exception:
+        pass
+
+    # Step 3 — feedback request
+    feedback_text = verification.get_feedback_request(language)
+    feedback_audio = ""
+    try:
+        feedback_audio = await tts.synthesize(feedback_text, language=language)
+    except Exception:
+        pass
+    feedback_turn = Turn(speaker="ai", raw_transcript=feedback_text, tts_audio_b64=feedback_audio)
+    session.add_turn(feedback_turn)
+    await websocket.send_json({
+        "type": "feedback_request",
+        "text": feedback_text,
+        "tts_audio_b64": feedback_audio,
+        "ticket_id": getattr(ticket_info, "ticket_id", None),
+    })
+    print(f"[END_CALL] Ticket created, feedback requested. Session: {session.session_id}")
+
+
+async def _handle_feedback(websocket: WebSocket, session: SessionState, msg: dict):
+    """Citizen submits a 1–5 star rating. Log it and say goodbye."""
+    rating: int = msg.get("rating", 0)
+    language = session.user_language or session.detected_language
+
+    await log_event(
+        session.session_id, "feedback_submitted", actor="citizen",
+        payload={"rating": rating},
+    )
+
+    goodbye = {
+        "kn": "ಧನ್ಯವಾದ! ನಿಮ್ಮ ಪ್ರತಿಕ್ರಿಯೆಗೆ ಧನ್ಯವಾದ. ಒಳ್ಳೆಯ ದಿನ ಆಗಲಿ!",
+        "hi": "धन्यवाद! आपकी प्रतिक्रिया के लिए शुक्रिया। अच्छा दिन हो!",
+        "en": "Thank you for your feedback! Have a great day!",
+    }
+    bye_text = goodbye.get(language, goodbye["en"])
+    bye_audio = ""
+    try:
+        bye_audio = await tts.synthesize(bye_text, language=language)
+    except Exception:
+        pass
+    bye_turn = Turn(speaker="ai", raw_transcript=bye_text, tts_audio_b64=bye_audio)
+    session.add_turn(bye_turn)
+    await websocket.send_json({
+        "type": "call_ended",
+        "ai_response": bye_text,
+        "tts_audio_b64": bye_audio,
+        "rating": rating,
+    })
+    print(f"[FEEDBACK] Rating {rating}/5 logged. Session: {session.session_id}")
 
 
 async def _handle_agent_ws_reply(msg: dict) -> None:
