@@ -705,254 +705,247 @@ async def voice_pipeline(websocket: WebSocket, session_id: str):
 
 
 async def _handle_audio_turn(websocket: WebSocket, session: SessionState, msg: dict):
-    """Full pipeline: audio → ASR → NLU → Sentiment → Escalation check → TTS → respond."""
+    """
+    Fast pipeline: ASR → quick conversational response → TTS → send audio to client.
+    Full NLU (intent/sentiment/confidence) runs in background AFTER audio is sent,
+    so the citizen hears a response ~600ms sooner.
+    """
     audio_b64: str = msg.get("data", "")
     msg_language: str = msg.get("language", session.detected_language)
     district:     str = msg.get("district", session.district)
 
-    # Preserve user's explicitly chosen language — set once on first audio turn if not
-    # already stored, then always use it so ASR detection never overrides the UI selection.
+    # Preserve user's explicitly chosen language
     if not session.user_language:
         session.user_language = msg_language
     language = session.user_language
 
-    print(f"[AUDIO] Language: {language}, District: {district}")
-    print(f"[AUDIO] Audio data length: {len(audio_b64)}")
-
     session.detected_language = language
     session.district = district
 
-    # Populate dialect_tag from district if not already set
     if not session.dialect_tag:
         from services.dialect_context import DialectContextProvider
         _dcp = DialectContextProvider()
         try:
-            profile = _dcp.get_profile(district)
-            session.dialect_tag = profile.dialect_tag
+            session.dialect_tag = _dcp.get_profile(district).dialect_tag
         except Exception:
             session.dialect_tag = district
 
-    # Decode audio
     audio_bytes = base64.b64decode(audio_b64) if audio_b64 else b""
-    print(f"[AUDIO] Decoded audio bytes: {len(audio_bytes)}")
+    print(f"[AUDIO] {len(audio_bytes)} bytes | lang={language} district={district}")
 
     # ── 1. ASR ─────────────────────────────────────────────────────────────
-    print("[ASR] Starting transcription...")
     async with track("asr"):
         asr_result = await asr.transcribe(audio_bytes, hint_language=language, district=district)
-    print(f"[ASR] Result: {asr_result.transcript[:50]}... (confidence: {asr_result.confidence})")
-    print(f"[ASR] Detected language: {asr_result.language}")
+    print(f"[ASR] '{asr_result.transcript[:60]}' conf={asr_result.confidence}")
 
-    # ASR detected language is a hint for transcription quality logging only.
-    # We do NOT override the user's selected language for NLU/TTS.
-    if asr_result.language:
-        print(f"[ASR] Detected language hint: {asr_result.language} (user selected: {language})")
+    # ── 2. Fast conversational response (plain text, ~200ms) ───────────────
+    async with track("conversation"):
+        ai_text = await nlu.generate_conversation_turn(asr_result.transcript, session)
+    print(f"[CONV] '{ai_text[:80]}'")
 
-    # ── 2. Advance conversation stage before NLU so prompt is correct ─────
-    # After the citizen's first turn, the AI asks a follow-up. From the second
-    # turn onward, the AI moves to confirmation (seeking_confirmation).
-    if (session.conversation_stage == "gathering_info"
-            and len(session.citizen_turns()) >= 1):
-        session.conversation_stage = "seeking_confirmation"
-        print(f"[STAGE] Advanced to seeking_confirmation")
+    # ── 3. TTS ─────────────────────────────────────────────────────────────
+    tts_audio = ""
+    try:
+        async with track("tts"):
+            tts_audio = await tts.synthesize(ai_text, language=language)
+        print(f"[TTS] audio length: {len(tts_audio)}")
+    except Exception as e:
+        print(f"[TTS] failed: {e}")
 
-    # ── 3. NLU (Gemini) ────────────────────────────────────────────────────
-    print(f"[NLU] Starting intent extraction for: {asr_result.transcript[:50]}...")
-    async with track("nlu"):
-        nlu_result = await nlu.extract_intent_and_rephrase(asr_result.transcript, session)
-    print(f"[NLU] Result - Intent: {nlu_result.get('intent')}, Confidence: {nlu_result.get('intent_confidence')}")
-
-    # ── 4. Sentiment ───────────────────────────────────────────────────────
-    print(f"[SENTIMENT] Starting analysis...")
-    async with track("sentiment"):
-        sentiment_result = await sentiment.analyze(asr_result.transcript, audio_bytes, language)
-    print(f"[SENTIMENT] Result - Label: {sentiment_result.label}, Intensity: {sentiment_result.intensity}")
-
-    # ── 5. Build citizen turn ──────────────────────────────────────────────
+    # ── 4. Build turns and add to session ──────────────────────────────────
     citizen_turn = Turn(
         speaker="citizen",
         raw_transcript=asr_result.transcript,
         asr_confidence=asr_result.confidence,
         detected_language=asr_result.language,
-        intent=nlu_result.get("intent"),
-        intent_entropy=nlu_result.get("intent_entropy", 0.0),
-        sentiment=TurnSentiment(
+    )
+    session.add_turn(citizen_turn)
+
+    ai_turn = Turn(
+        speaker="ai",
+        raw_transcript=ai_text,
+        tts_audio_b64=tts_audio,
+    )
+    session.add_turn(ai_turn)
+
+    # ── 5. Send audio to citizen immediately ───────────────────────────────
+    session.verification_state = "pending"
+    await websocket.send_json({
+        "type": "turn_update",
+        "citizen_turn": citizen_turn.model_dump(mode="json"),
+        "ai_turn":      ai_turn.model_dump(mode="json"),
+        "session": {
+            "session_id":        session.session_id,
+            "composite_confidence": session.composite_confidence,
+            "sentiment_timeline": session.sentiment_timeline,
+            "is_escalated":      session.is_escalated,
+            "clarification_count": session.clarification_count,
+            "verification_state": session.verification_state,
+            "district":          session.district,
+            "current_language":  session.detected_language,
+            "conversation_stage": session.conversation_stage,
+        },
+        "mock_mode": settings.environment == "mock",
+    })
+    print(f"[WS] turn_update sent ← audio on its way to citizen")
+
+    # Always show Yes/Partly/No panel so citizen can confirm understanding
+    verify_panel_text = _verification_engine.generate_verification_prompt(
+        intent=session.final_intent or "other_grievance",
+        entities={},
+        language=language,
+        district=district,
+    )
+    await websocket.send_json({
+        "type": "verification_prompt",
+        "text": verify_panel_text,
+        "language": language,
+        "district": district,
+        "session_id": session.session_id,
+        "conversation_stage": session.conversation_stage,
+    })
+
+    # ── 6. Background: full NLU + sentiment + escalation (non-blocking) ────
+    # Runs while the citizen is listening to the TTS audio.
+    asyncio.create_task(
+        _background_nlu_task(websocket, session, asr_result, citizen_turn, audio_bytes, language, district)
+    )
+
+
+async def _background_nlu_task(
+    websocket: WebSocket,
+    session: SessionState,
+    asr_result,
+    citizen_turn: Turn,
+    audio_bytes: bytes,
+    language: str,
+    district: str,
+) -> None:
+    """
+    Runs after the audio response has been sent to the citizen.
+    Extracts intent, sentiment, confidence and updates the agent dashboard.
+    The citizen is already hearing the AI response while this runs.
+    """
+    try:
+        nlu_result = await nlu.extract_intent_and_rephrase(asr_result.transcript, session)
+        sentiment_result = await sentiment.analyze(asr_result.transcript, audio_bytes, language)
+
+        # Back-fill the citizen turn that was already added to the session
+        citizen_turn.intent = nlu_result.get("intent")
+        citizen_turn.intent_entropy = nlu_result.get("intent_entropy", 0.0)
+        citizen_turn.ai_rephrasing = nlu_result.get("rephrasing", "")
+        citizen_turn.sentiment = TurnSentiment(
             label=sentiment_result.label,
             intensity=sentiment_result.intensity,
             prosodic_component=sentiment_result.prosodic_component,
             text_component=sentiment_result.text_component,
-        ),
-        ai_rephrasing=nlu_result.get("rephrasing", ""),
-    )
-    session.add_turn(citizen_turn)
-    session.final_intent = citizen_turn.intent
-    sentiment_label = citizen_turn.sentiment.label if citizen_turn.sentiment else "unknown"
-    print(f"[TURN] Added citizen turn - Intent: {citizen_turn.intent}, Sentiment: {sentiment_label}")
-
-    # ── 6. Escalation check ────────────────────────────────────────────────
-    print(f"[ESCALATION] Evaluating escalation...")
-    esc_decision = escalation.evaluate(
-        session,
-        asr_confidence=asr_result.confidence,
-        intent_entropy=citizen_turn.intent_entropy,
-        sentiment=sentiment_result,
-    )
-    session.composite_confidence = 1.0 - esc_decision.composite_score
-    print(f"[ESCALATION] Should escalate: {esc_decision.should_escalate}, Composite confidence: {session.composite_confidence}")
-
-    # ── 7. Build AI response text based on conversation stage ──────────────
-    # gathering_info  → rephrasing + follow-up question (no confirm buttons)
-    # seeking_confirmation → rephrasing + confirmation question (show buttons)
-    if session.conversation_stage == "seeking_confirmation":
-        verification_prompt_text = _verification_engine.generate_verification_prompt(
-            intent=citizen_turn.intent or "other_grievance",
-            entities=nlu_result.get("entities", {}),
-            language=language,
-            district=district,
         )
-        session.verification_state = "pending"
-        verification_text = " ".join(filter(None, [
-            nlu_result.get("rephrasing", ""),
-            nlu_result.get("verification_prompt", "") or verification_prompt_text,
-        ]))
-    else:
-        # gathering_info: ask follow-up, don't show confirm buttons
-        verification_prompt_text = ""
-        verification_text = " ".join(filter(None, [
-            nlu_result.get("rephrasing", ""),
-            nlu_result.get("follow_up_question", ""),
-        ]))
+        # Update session-level timeline and intent
+        if citizen_turn.sentiment:
+            session.sentiment_timeline.append({
+                "turn_id": citizen_turn.turn_id,
+                "timestamp": citizen_turn.timestamp.isoformat(),
+                "label": sentiment_result.label,
+                "intensity": sentiment_result.intensity,
+                "prosodic_component": sentiment_result.prosodic_component,
+                "text_component": sentiment_result.text_component,
+            })
+            if len(session.sentiment_timeline) > 20:
+                session.sentiment_timeline = session.sentiment_timeline[-20:]
+        session.final_intent = citizen_turn.intent
 
-    print(f"[TTS] Synthesizing AI response: {verification_text[:100]}...")
+        esc_decision = escalation.evaluate(
+            session,
+            asr_confidence=asr_result.confidence,
+            intent_entropy=citizen_turn.intent_entropy,
+            sentiment=sentiment_result,
+        )
+        session.composite_confidence = 1.0 - esc_decision.composite_score
 
-    tts_audio = ""
-    try:
-        async with track("tts"):
-            tts_audio = await tts.synthesize(
-                verification_text, language=language,
-                sentiment_label=sentiment_result.label,
-            )
-        print(f"[TTS] Synthesis successful, audio length: {len(tts_audio)}")
-    except Exception as e:
-        print(f"[TTS] Synthesis failed: {e}")
-        print(f"[TTS] Continuing without audio - text will still be displayed")
-
-    ai_turn = Turn(
-        speaker="ai",
-        raw_transcript=verification_text,
-        ai_rephrasing=nlu_result.get("rephrasing", ""),
-        tts_audio_b64=tts_audio,
-        intent=citizen_turn.intent,
-    )
-    session.add_turn(ai_turn)
-    print(f"[TURN] Added AI turn")
-
-    # ── 7. Send response to client ─────────────────────────────────────────
-    # Build a standalone ConfidenceScore for this turn (independent of the
-    # EscalationDecision so the agent dashboard always gets the full breakdown)
-    turn_confidence = build_score(
-        asr_conf=asr_result.confidence,
-        intent_entropy=citizen_turn.intent_entropy,
-        sentiment_intensity=sentiment_result.intensity,
-        clarification_count=session.clarification_count,
-    )
-
-    # Append to per-session confidence history (capped at 20)
-    session.confidence_history.append({
-        "turn_id": citizen_turn.turn_id,
-        "timestamp": citizen_turn.timestamp.isoformat(),
-        "composite_score": turn_confidence.composite_score,
-        "asr_confidence": turn_confidence.asr_confidence,
-        "intent_entropy": turn_confidence.intent_entropy,
-        "sentiment_intensity": turn_confidence.sentiment_intensity,
-        "clarification_count": turn_confidence.clarification_count,
-    })
-    if len(session.confidence_history) > 20:
-        session.confidence_history = session.confidence_history[-20:]
-
-    print(f"[WS] Sending turn_update to client...")
-    await websocket.send_json({
-        "type": "turn_update",
-        "citizen_turn": citizen_turn.model_dump(mode="json"),
-        "ai_turn": ai_turn.model_dump(mode="json"),
-        "session": {
-            "session_id": session.session_id,
-            "composite_confidence": session.composite_confidence,
-            "sentiment_timeline": session.sentiment_timeline,
-            "is_escalated": session.is_escalated,
-            "clarification_count": session.clarification_count,
-            "verification_state": session.verification_state,
-            "district": session.district,
-            "current_language": session.detected_language,
-        },
-        "nlu": {
-            "intent": nlu_result.get("intent"),
-            "intent_confidence": nlu_result.get("intent_confidence"),
-            "structured_summary": nlu_result.get("structured_summary"),
-        },
-        "confidence_score": turn_confidence.model_dump(),
-        "escalation": {
-            "composite_score": esc_decision.composite_score,
-            "explanation": esc_decision.explanation,
-        },
-        "mock_mode": settings.environment == "mock",
-    })
-    print(f"[WS] turn_update sent successfully")
-
-    # Broadcast live turn to all connected agent dashboards
-    last_sent = session.sentiment_timeline[-1] if session.sentiment_timeline else {}
-    push_active_session(
-        session_id=session.session_id,
-        district=session.district,
-        language=session.detected_language,
-        sentiment=last_sent.get("label", "calm"),
-        sentiment_intensity=last_sent.get("intensity", 0.3),
-        summary=asr_result.transcript[:120],
-        reason="active",
-        final_intent=session.final_intent,
-        is_escalated=session.is_escalated,
-    )
-    await broadcast_to_agents({
-        "type": "session_live_update",
-        "session_id": session.session_id,
-        "citizen_turn": citizen_turn.model_dump(mode="json"),
-        "ai_turn": ai_turn.model_dump(mode="json"),
-        "confidence_score": turn_confidence.model_dump(),
-        "sentiment_timeline": session.sentiment_timeline[-10:],
-        "session": {
-            "session_id": session.session_id,
-            "district": session.district,
-            "language": session.detected_language,
-            "sentiment": last_sent.get("label", "calm"),
-            "sentiment_intensity": last_sent.get("intensity", 0.3),
-            "summary": asr_result.transcript[:120],
-            "reason": "active",
-            "final_intent": session.final_intent,
-            "is_escalated": session.is_escalated,
-        },
-    })
-
-    # Only send verification_prompt (shows Yes/Partly/No buttons) when we're
-    # ready to ask for confirmation. In gathering_info stage, the citizen just
-    # continues speaking — no button panel needed.
-    if session.conversation_stage == "seeking_confirmation" and verification_prompt_text:
-        await websocket.send_json({
-            "type": "verification_prompt",
-            "text": verification_prompt_text,
-            "language": language,
-            "district": district,
-            "session_id": session.session_id,
-            "conversation_stage": session.conversation_stage,
+        turn_confidence = build_score(
+            asr_conf=asr_result.confidence,
+            intent_entropy=citizen_turn.intent_entropy,
+            sentiment_intensity=sentiment_result.intensity,
+            clarification_count=session.clarification_count,
+        )
+        session.confidence_history.append({
+            "turn_id": citizen_turn.turn_id,
+            "timestamp": citizen_turn.timestamp.isoformat(),
+            "composite_score": turn_confidence.composite_score,
+            "asr_confidence": turn_confidence.asr_confidence,
+            "intent_entropy": turn_confidence.intent_entropy,
+            "sentiment_intensity": turn_confidence.sentiment_intensity,
+            "clarification_count": turn_confidence.clarification_count,
         })
-        print(f"[WS] verification_prompt sent (seeking confirmation)")
-    else:
-        print(f"[WS] Skipped verification_prompt — stage: {session.conversation_stage}")
-    
-    # ── 8. Handle escalation if needed ─────────────────────────────────────
-    if esc_decision.should_escalate:
-        print(f"[ESCALATION] Escalating to human agent after sending turns...")
-        await _do_escalation(websocket, session, esc_decision, language)
-        return
+        if len(session.confidence_history) > 20:
+            session.confidence_history = session.confidence_history[-20:]
+
+        # Send NLU enrichment to client (updates agent dashboard gauges)
+        try:
+            await websocket.send_json({
+                "type": "nlu_update",
+                "session_id": session.session_id,
+                "nlu": {
+                    "intent": nlu_result.get("intent"),
+                    "intent_confidence": nlu_result.get("intent_confidence"),
+                    "structured_summary": nlu_result.get("structured_summary"),
+                    "responsible_department": nlu_result.get("responsible_department"),
+                },
+                "confidence_score": turn_confidence.model_dump(),
+                "escalation": {
+                    "composite_score": esc_decision.composite_score,
+                    "explanation": esc_decision.explanation,
+                },
+                "sentiment_timeline": session.sentiment_timeline[-10:],
+            })
+        except Exception:
+            pass  # WebSocket may have closed
+
+        # Broadcast enriched data to agent dashboards
+        last_sent = session.sentiment_timeline[-1] if session.sentiment_timeline else {}
+        push_active_session(
+            session_id=session.session_id,
+            district=session.district,
+            language=session.detected_language,
+            sentiment=last_sent.get("label", "calm"),
+            sentiment_intensity=last_sent.get("intensity", 0.3),
+            summary=asr_result.transcript[:120],
+            reason="active",
+            final_intent=session.final_intent,
+            is_escalated=session.is_escalated,
+        )
+        await broadcast_to_agents({
+            "type": "session_live_update",
+            "session_id": session.session_id,
+            "citizen_turn": citizen_turn.model_dump(mode="json"),
+            "confidence_score": turn_confidence.model_dump(),
+            "sentiment_timeline": session.sentiment_timeline[-10:],
+            "session": {
+                "session_id": session.session_id,
+                "district": session.district,
+                "language": session.detected_language,
+                "sentiment": last_sent.get("label", "calm"),
+                "sentiment_intensity": last_sent.get("intensity", 0.3),
+                "summary": asr_result.transcript[:120],
+                "reason": "active",
+                "final_intent": session.final_intent,
+                "is_escalated": session.is_escalated,
+            },
+        })
+
+        # Persist enriched session
+        await session_manager.save_session(session)
+        print(f"[BG_NLU] intent={session.final_intent} sentiment={sentiment_result.label}")
+
+        # Escalate if needed
+        if esc_decision.should_escalate:
+            try:
+                await _do_escalation(websocket, session, esc_decision, language)
+            except Exception:
+                pass
+
+    except Exception as e:
+        print(f"[BG_NLU] error: {e}")
 
 
 async def _handle_verification_turn(websocket: WebSocket, session: SessionState, msg: dict):
@@ -1035,8 +1028,50 @@ async def _handle_verification_response(websocket: WebSocket, session: SessionSt
     action = result["action"]
 
     if action == "confirmed":
-        # Citizen confirmed — move to confirmed_ready. Ticket is created only when
-        # they explicitly end the call, so they can still add information.
+        if session.conversation_stage == "gathering_info":
+            # Citizen confirmed basic understanding — advance to seeking_confirmation
+            # and immediately ask for final registration confirmation.
+            session.conversation_stage = "seeking_confirmation"
+            confirm_asks = {
+                "kn": f"ಸರಿ, ತಿಳಿಯಿತು! ನಿಮ್ಮ {(session.final_intent or 'ದೂರು').replace('_', ' ')} ಬಗ್ಗೆ ದೂರು ದಾಖಲಿಸಲೇ?",
+                "hi": f"ठीक है! आपकी {(session.final_intent or 'शिकायत').replace('_', ' ')} दर्ज करूं?",
+                "en": f"Got it! Shall I go ahead and register your {(session.final_intent or 'complaint').replace('_', ' ')}?",
+            }
+            ack_text = confirm_asks.get(language, confirm_asks["en"])
+            tts_audio = ""
+            try:
+                tts_audio = await tts.synthesize(ack_text, language=language)
+            except Exception:
+                pass
+            ai_turn = Turn(speaker="ai", raw_transcript=ack_text, tts_audio_b64=tts_audio)
+            session.add_turn(ai_turn)
+            await websocket.send_json({
+                "type": "verification_result",
+                "state": "gathering_confirmed",
+                "ai_response": ack_text,
+                "tts_audio_b64": tts_audio,
+                "session_id": session.session_id,
+                "conversation_stage": "seeking_confirmation",
+            })
+            # Send a fresh verification_prompt for the registration confirmation step
+            confirm_prompt = _verification_engine.generate_verification_prompt(
+                intent=session.final_intent or "other_grievance",
+                entities={},
+                language=language,
+                district=session.district,
+            )
+            await websocket.send_json({
+                "type": "verification_prompt",
+                "text": confirm_prompt,
+                "language": language,
+                "district": session.district,
+                "session_id": session.session_id,
+                "conversation_stage": "seeking_confirmation",
+            })
+            print(f"[VERIFICATION] gathering_info confirmed — advancing to seeking_confirmation")
+            return
+
+        # seeking_confirmation or confirmed_ready confirmed — ready to create ticket on end_call
         session.conversation_stage = "confirmed_ready"
         ack_text = verification.get_acknowledgment(language, session.final_intent or "other_grievance")
         tts_audio = ""

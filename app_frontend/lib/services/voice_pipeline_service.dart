@@ -163,8 +163,13 @@ class VoicePipelineService {
         break;
 
       case 'verification_result':
-        // Backend confirms/clarifies after citizen taps yes/partly/no
-        _verifyPromptCtrl.add(null); // dismiss verify panel
+        // Backend confirms/clarifies after citizen taps yes/partly/no.
+        // For 'gathering_confirmed', a new verification_prompt follows — don't
+        // dismiss the panel yet; the incoming verification_prompt will replace it.
+        final vrState = data['state'] as String? ?? '';
+        if (vrState != 'gathering_confirmed') {
+          _verifyPromptCtrl.add(null); // dismiss panel for final confirmed/clarify
+        }
         final aiText = data['ai_response'] ?? '';
         if (aiText.isNotEmpty) {
           _addTurn(SessionTurn(speaker: 'ai', rawTranscript: aiText));
@@ -249,6 +254,19 @@ class VoicePipelineService {
         _channel = null;
         sessionId = null;
         _feedbackCtrl.add(null);
+        break;
+
+      case 'nlu_update':
+        // Background NLU enrichment — update agent dashboard streams
+        if (data['nlu'] != null) {
+          _nluCtrl.add(NluResult.fromJson(data['nlu']));
+        }
+        if (data['confidence_score'] != null) {
+          _confidenceCtrl.add(ConfidenceScore.fromJson(data['confidence_score']));
+        }
+        if (data['session'] != null) {
+          _sessionMetaCtrl.add(SessionMeta.fromJson(data['session']));
+        }
         break;
 
       case 'pong':
@@ -463,5 +481,6 @@ class VoicePipelineService {
     _confidenceCtrl.close();
     _mockModeCtrl.close();
     _ticketCtrl.close();
+    _feedbackCtrl.close();
   }
 }
