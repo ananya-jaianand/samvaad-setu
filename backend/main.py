@@ -28,6 +28,7 @@ from services.agent_queue import (
     register_citizen, unregister_citizen, send_to_citizen, broadcast_to_agents,
 )
 from services.intent_taxonomy import IntentTaxonomy
+from services import ticket_service
 
 _taxonomy = IntentTaxonomy()
 
@@ -222,6 +223,26 @@ async def agent_correction(session_id: str, body: dict):
         payload={"field": field, "value": value, "agent_id": agent_id},
     )
     return {"ok": ok, "session_id": session_id, "field": field, "value": value}
+
+
+@app.get("/sessions/{session_id}/ticket")
+async def get_session_ticket(session_id: str):
+    """
+    Return the ticket for a session.  If none exists yet (e.g. citizen just
+    hung up without confirmation), create one with trigger='call_ended'.
+    """
+    existing = await ticket_service.get_ticket(session_id)
+    if existing:
+        return existing.model_dump()
+
+    session = await session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    if not session.turns:
+        raise HTTPException(404, "No activity on this session — no ticket to create")
+
+    info = await ticket_service.create_ticket(session, "call_ended")
+    return info.model_dump()
 
 
 @app.post("/sessions/{session_id}/agent-reply")
@@ -662,6 +683,12 @@ async def voice_pipeline(websocket: WebSocket, session_id: str):
         unregister_citizen(session_id)
         remove_active_session(session_id)
         await broadcast_to_agents({"type": "session_ended", "session_id": session_id})
+        # Silently ensure a ticket exists for any session that had activity
+        if session.turns:
+            try:
+                await ticket_service.create_ticket(session, "call_ended")
+            except Exception:
+                pass
         await session_manager.save_session(session)
 
 
@@ -993,6 +1020,16 @@ async def _handle_verification_response(websocket: WebSocket, session: SessionSt
         )
         await write_verified_interaction(session)
 
+        # Create ticket and notify citizen inline
+        ticket_info = await ticket_service.create_ticket(session, "confirmed")
+        try:
+            await websocket.send_json({
+                "type": "ticket_created",
+                "ticket": ticket_info.model_dump(mode="json"),
+            })
+        except Exception:
+            pass
+
     elif action == "clarify":
         clarify_text = result["clarification_prompt"]
         tts_audio = ""
@@ -1150,3 +1187,13 @@ async def _do_escalation(websocket: WebSocket, session: SessionState, esc_decisi
         "escalation_message": esc_msg,
     })
     print(f"[ESCALATION] Escalation packet sent successfully")
+
+    # Create ticket and notify citizen so they have a reference number
+    ticket_info = await ticket_service.create_ticket(session, "escalated")
+    try:
+        await websocket.send_json({
+            "type": "ticket_created",
+            "ticket": ticket_info.model_dump(mode="json"),
+        })
+    except Exception:
+        pass

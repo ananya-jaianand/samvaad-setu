@@ -30,6 +30,29 @@ class AuditLog(Base):
     payload_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
 
 
+class Ticket(Base):
+    __tablename__ = "tickets"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    ticket_id: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    session_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True, unique=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    # "confirmed" | "escalated" | "call_ended"
+    trigger: Mapped[str] = mapped_column(String(16), nullable=False, default="call_ended")
+    intent: Mapped[str] = mapped_column(String(64), nullable=False, default="other_grievance")
+    responsible_department: Mapped[str] = mapped_column(String(256), nullable=False, default="General Administration")
+    district: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
+    language: Mapped[str] = mapped_column(String(8), nullable=False, default="kn")
+    # "submitted" | "in_review" | "resolved"
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="submitted")
+    sla_days: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+
 class VerifiedInteraction(Base):
     __tablename__ = "verified_interactions"
 

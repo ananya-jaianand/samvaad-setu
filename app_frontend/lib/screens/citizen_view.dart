@@ -5,6 +5,7 @@ import '../theme/app_theme.dart';
 import '../services/voice_pipeline_service.dart';
 import '../models/session_models.dart';
 import '../config/app_config.dart';
+import '../widgets/ticket_card.dart';
 
 // ─── Language config ──────────────────────────────────────────────────────────
 
@@ -286,6 +287,23 @@ class _CitizenViewState extends State<CitizenView>
                                       packet: escSnap.data,
                                     ),
                                   ),
+
+                                // Ticket card — shown after confirmed, escalated, or end-of-call
+                                StreamBuilder<TicketInfo?>(
+                                  stream: _svc.ticketStream,
+                                  builder: (ctx, tickSnap) {
+                                    final ticket = tickSnap.data;
+                                    if (ticket == null) return const SizedBox.shrink();
+                                    return Padding(
+                                      padding: const EdgeInsets.only(top: 10),
+                                      child: TicketCard(
+                                        ticket: ticket,
+                                        lang: _lang,
+                                        fontFamily: _fontFamily,
+                                      ),
+                                    );
+                                  },
+                                ),
 
                                 // Error banner
                                 if (state == PipelineState.error)

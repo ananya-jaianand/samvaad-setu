@@ -252,6 +252,50 @@ class NluResult {
   }
 }
 
+class TicketInfo {
+  final String ticketId;
+  final String sessionId;
+  final String trigger;   // "confirmed" | "escalated" | "call_ended"
+  final String intent;
+  final String department;
+  final String district;
+  final String language;
+  final String status;    // "submitted" | "in_review" | "resolved"
+  final int slaDays;
+  final String summary;
+  final String createdAt;
+
+  const TicketInfo({
+    required this.ticketId,
+    required this.sessionId,
+    required this.trigger,
+    required this.intent,
+    required this.department,
+    required this.district,
+    required this.language,
+    required this.status,
+    required this.slaDays,
+    required this.summary,
+    required this.createdAt,
+  });
+
+  factory TicketInfo.fromJson(Map<String, dynamic> json) {
+    return TicketInfo(
+      ticketId: json['ticket_id'] ?? '',
+      sessionId: json['session_id'] ?? '',
+      trigger: json['trigger'] ?? 'call_ended',
+      intent: json['intent'] ?? '',
+      department: json['department'] ?? '',
+      district: json['district'] ?? '',
+      language: json['language'] ?? 'kn',
+      status: json['status'] ?? 'submitted',
+      slaDays: (json['sla_days'] as num?)?.toInt() ?? 5,
+      summary: json['summary'] ?? '',
+      createdAt: json['created_at'] ?? '',
+    );
+  }
+}
+
 class AgentQueueItem {
   final String sessionId;
   final String district;
