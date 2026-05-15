@@ -11,9 +11,9 @@ SARVAM_TTS_URL = "https://api.sarvam.ai/text-to-speech"
 
 # Speaker voices per language — valid Sarvam Bulbul voice IDs
 SPEAKER_MAP = {
-    "kn": "meera",     # Kannada female voice
-    "hi": "pavithra",  # Hindi female voice
-    "en": "pavithra",  # English — Sarvam uses pavithra for en-IN too
+    "kn": "anushka",   # Kannada female voice
+    "hi": "anushka",   # Hindi female voice
+    "en": "anushka",   # English female voice
 }
 
 # Prosody presets per sentiment — calmer for distress
