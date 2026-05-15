@@ -64,7 +64,7 @@ def get_session_factory() -> async_sessionmaker:
 
 async def create_all_tables() -> None:
     """Create tables if they don't exist. Safe to call on every startup."""
-    from models.audit_model import AuditLog, VerifiedInteraction  # noqa: F401 — registers models
+    from models.audit_model import AuditLog, VerifiedInteraction, Ticket  # noqa: F401 — registers models
 
     if _engine is None:
         init_db()

@@ -40,6 +40,7 @@ class VoicePipelineService {
   final _verifyPromptCtrl = StreamController<VerificationPrompt?>.broadcast();
   final _confidenceCtrl = StreamController<ConfidenceScore?>.broadcast();
   final _mockModeCtrl = StreamController<bool?>.broadcast();
+  final _ticketCtrl = StreamController<TicketInfo?>.broadcast();
 
   Stream<PipelineState> get stateStream => _stateCtrl.stream;
   Stream<List<SessionTurn>> get turnsStream => _turnsCtrl.stream;
@@ -51,16 +52,19 @@ class VoicePipelineService {
       _verifyPromptCtrl.stream;
   Stream<ConfidenceScore?> get confidenceStream => _confidenceCtrl.stream;
   Stream<bool?> get mockModeStream => _mockModeCtrl.stream;
+  Stream<TicketInfo?> get ticketStream => _ticketCtrl.stream;
 
   PipelineState _currentState = PipelineState.idle;
   final List<SessionTurn> _turns = [];
   String _currentLanguage = AppConfig.defaultLanguage;
   String _currentDistrict = AppConfig.defaultDistrict;
   bool? _isMockMode;
+  TicketInfo? _currentTicket;
 
   String get currentLanguage => _currentLanguage;
   String get currentDistrict => _currentDistrict;
   bool? get isMockMode => _isMockMode;
+  TicketInfo? get currentTicket => _currentTicket;
 
   VoicePipelineService() {
     _stateCtrl.add(_currentState);
@@ -85,6 +89,8 @@ class VoicePipelineService {
     _turnsCtrl.add([]);
     _escalationCtrl.add(null);
     _verifyPromptCtrl.add(null);
+    _currentTicket = null;
+    _ticketCtrl.add(null);
 
     try {
       final response = await http
@@ -194,6 +200,12 @@ class VoicePipelineService {
         } else {
           _setState(PipelineState.ready);
         }
+        break;
+
+      case 'ticket_created':
+        final ticket = TicketInfo.fromJson(data['ticket'] as Map<String, dynamic>);
+        _currentTicket = ticket;
+        _ticketCtrl.add(ticket);
         break;
 
       case 'pong':
@@ -328,16 +340,34 @@ class VoicePipelineService {
     _confidenceCtrl.add(null);
     _mockModeCtrl.add(null);
     _isMockMode = null;
+    _currentTicket = null;
+    _ticketCtrl.add(null);
     _setState(PipelineState.idle);
   }
 
   /// End the call but keep turns in memory for transcript display.
-  void endCall() {
+  /// Fetches a ticket from the backend if one hasn't been created via WS yet.
+  Future<void> endCall() async {
+    final sid = sessionId;
     _channel?.sink.close();
     _channel = null;
     sessionId = null;
     _verifyPromptCtrl.add(null);
     _setState(PipelineState.idle);
+
+    if (sid != null && _turns.isNotEmpty && _currentTicket == null) {
+      try {
+        final res = await http
+            .get(Uri.parse('$backendUrl/sessions/$sid/ticket'))
+            .timeout(const Duration(seconds: 5));
+        if (res.statusCode == 200) {
+          final ticket = TicketInfo.fromJson(
+              jsonDecode(res.body) as Map<String, dynamic>);
+          _currentTicket = ticket;
+          _ticketCtrl.add(ticket);
+        }
+      } catch (_) {}
+    }
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -385,5 +415,6 @@ class VoicePipelineService {
     _verifyPromptCtrl.close();
     _confidenceCtrl.close();
     _mockModeCtrl.close();
+    _ticketCtrl.close();
   }
 }

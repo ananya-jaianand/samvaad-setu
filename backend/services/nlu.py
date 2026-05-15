@@ -13,7 +13,7 @@ from services.pii_redactor import redact as pii_redact, unredact as pii_unredact
 _dialect_provider = DialectContextProvider()
 _taxonomy = IntentTaxonomy()
 
-_MODEL = "gemini-2.0-flash"
+_MODEL = "gemini-2.5-flash"
 _client: genai.Client | None = (
     genai.Client(api_key=settings.gemini_api_key)
     if settings.gemini_api_key
