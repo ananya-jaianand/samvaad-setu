@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(redis-cli ping *)",
+      "Bash(python3 -m venv venv)",
+      "Bash(flutter pub *)",
+      "Bash(flutter run *)",
+      "Bash(gunzip -c \"/Users/samyukthamohan/.claude/projects/-Users-samyukthamohan-Projects-samvaad-setu/799ef1ae-8cd6-40f5-b11b-87aa83cb9804/tool-results/webfetch-1778088479795-jpgfd9.bin\")",
+      "Bash(cp \"/Users/samyukthamohan/.claude/projects/-Users-samyukthamohan-Projects-samvaad-setu/799ef1ae-8cd6-40f5-b11b-87aa83cb9804/tool-results/webfetch-1778088479795-jpgfd9.bin\" /tmp/design.tar.gz)",
+      "Read(//private/tmp/**)",
+      "Bash(tar -xzf design.tar.gz)",
+      "Bash(flutter analyze *)",
+      "Bash(echo \"Flutter starting in background, PID: $!\")",
+      "Bash(flutter build *)",
+      "Bash(python3 -m pytest backend/tests/test_pii_redactor.py -v)",
+      "Bash(docker compose *)",
+      "Bash(python3 -c ' *)",
+      "Bash(grep -v \"^$\")",
+      "Bash(pkill -f \"uvicorn main:app\")",
+      "Bash(curl -s -X POST http://localhost:8000/demo/seed-agent-queue)",
+      "Bash(curl -s http://localhost:8000/agent/queue)",
+      "Bash(curl -s http://localhost:8000/sessions/demo0001-aa11-bb22-cc33-dd4444444401/full-context)"
+    ],
+    "additionalDirectories": [
+      "/Users/samyukthamohan/Projects/samvaad-setu/backend"
+    ]
+  }
+}
