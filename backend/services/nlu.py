@@ -80,6 +80,102 @@ RULES:
     return _dialect_provider.inject_into_prompt(profile, base_prompt)
 
 
+async def generate_conversation_turn(
+    transcript: str,
+    session: SessionState,
+) -> str:
+    """
+    Fast conversational response — plain text only, single Gemini call with a
+    minimal prompt. Used as the primary voice response; full NLU runs in background.
+
+    Target latency: ~200-350 ms (vs ~700 ms for full JSON NLU).
+    """
+    language = session.user_language or session.detected_language
+    district = session.district
+    stage = session.conversation_stage
+
+    # Redact PII before sending to Gemini
+    redacted, token_map = pii_redact(transcript, language)
+
+    if not settings.gemini_api_key or settings.environment == "mock" or _client is None:
+        return _mock_conversation_turn(redacted, token_map, language, stage)
+
+    # Last 3 exchanges for context (keep prompt short = faster output)
+    history_lines = []
+    for t in session.turns[-6:]:
+        if t.speaker == "citizen":
+            history_lines.append(f"Citizen: {t.raw_transcript}")
+        elif t.speaker == "ai":
+            history_lines.append(f"Assistant: {t.raw_transcript}")
+    history = "\n".join(history_lines) or "—"
+
+    if stage == "seeking_confirmation":
+        stage_directive = (
+            f"Briefly summarise the citizen's issue and ask: "
+            f"'Shall I go ahead and register this complaint?' — in {language}."
+        )
+    elif stage == "confirmed_ready":
+        stage_directive = (
+            f"Warmly confirm you have all details and tell them to tap 'End call' "
+            f"when ready — in {language}."
+        )
+    else:
+        stage_directive = (
+            f"Acknowledge briefly, then ask ONE focused follow-up question "
+            f"(specific ward/area, or urgency, or how long the issue has existed) — in {language}."
+        )
+
+    prompt = (
+        f"You are Samvaad-Setu, a warm voice assistant for Karnataka 1092 helpline.\n"
+        f"Caller is from {district.replace('_', ' ').title()}, speaking {language}.\n\n"
+        f"Conversation so far:\n{history}\n\n"
+        f"Citizen just said: \"{redacted}\"\n\n"
+        f"{stage_directive}\n\n"
+        f"RULES: respond in {language} ONLY · max 2 sentences · no PII (names/phone/aadhaar) "
+        f"· area/ward names are fine · warm, natural tone\n\n"
+        f"Reply with ONLY the response text:"
+    )
+
+    try:
+        response = await _client.aio.models.generate_content(
+            model=_MODEL, contents=prompt
+        )
+        result = response.text.strip()
+        if token_map:
+            result = pii_unredact(result, token_map)
+        return result
+    except Exception as e:
+        print(f"[NLU] generate_conversation_turn failed: {e}")
+        return _mock_conversation_turn(redacted, token_map, language, stage)
+
+
+def _mock_conversation_turn(
+    redacted_transcript: str, token_map: dict, language: str, stage: str
+) -> str:
+    if stage == "seeking_confirmation":
+        msgs = {
+            "kn": f"ನೀವು {redacted_transcript[:35]}... ಎಂದು ದೂರು ನೀಡಿದ್ದೀರಿ. ಇದನ್ನು ದಾಖಲಿಸಲೇ?",
+            "hi": f"आपने {redacted_transcript[:35]}... की शिकायत दी। क्या मैं इसे दर्ज करूं?",
+            "en": f"You've reported: {redacted_transcript[:50]}... Shall I go ahead and register this complaint?",
+        }
+    elif stage == "confirmed_ready":
+        msgs = {
+            "kn": "ಧನ್ಯವಾದ! ನಿಮ್ಮ ವಿವರಗಳು ಸಿದ್ಧವಾಗಿವೆ. ಮಾತು ಮುಗಿದಾಗ 'ಕರೆ ಕೊನೆಗೊಳಿಸಿ' ಒತ್ತಿ.",
+            "hi": "शुक्रिया! आपकी जानकारी तैयार है। जब तैयार हों तो 'कॉल समाप्त करें' दबाएं।",
+            "en": "Thank you! I have all your details. Tap 'End call' whenever you're ready.",
+        }
+    else:
+        msgs = {
+            "kn": f"ನೀವು {redacted_transcript[:35]}... ಎಂದು ಹೇಳಿದ್ದೀರಿ. ಈ ಸಮಸ್ಯೆ ಯಾವ ಬೀದಿ ಅಥವಾ ಪ್ರದೇಶದಲ್ಲಿ ಇದೆ?",
+            "hi": f"आपने {redacted_transcript[:35]}... बताया। यह समस्या किस क्षेत्र या गली में है?",
+            "en": f"I understood: {redacted_transcript[:50]}... Could you tell me which area or street this is in?",
+        }
+    result = msgs.get(language, msgs["en"])
+    if token_map:
+        result = pii_unredact(result, token_map)
+    return result
+
+
 async def extract_intent_and_rephrase(
     transcript: str,
     session: SessionState,
