@@ -41,6 +41,7 @@ class VoicePipelineService {
   final _confidenceCtrl = StreamController<ConfidenceScore?>.broadcast();
   final _mockModeCtrl = StreamController<bool?>.broadcast();
   final _ticketCtrl = StreamController<TicketInfo?>.broadcast();
+  final _feedbackCtrl = StreamController<Map<String, dynamic>?>.broadcast();
 
   Stream<PipelineState> get stateStream => _stateCtrl.stream;
   Stream<List<SessionTurn>> get turnsStream => _turnsCtrl.stream;
@@ -53,6 +54,7 @@ class VoicePipelineService {
   Stream<ConfidenceScore?> get confidenceStream => _confidenceCtrl.stream;
   Stream<bool?> get mockModeStream => _mockModeCtrl.stream;
   Stream<TicketInfo?> get ticketStream => _ticketCtrl.stream;
+  Stream<Map<String, dynamic>?> get feedbackStream => _feedbackCtrl.stream;
 
   PipelineState _currentState = PipelineState.idle;
   final List<SessionTurn> _turns = [];
@@ -208,6 +210,47 @@ class VoicePipelineService {
         _ticketCtrl.add(ticket);
         break;
 
+      case 'hold_on':
+        // Backend is creating the ticket — play audio and show AI turn
+        final holdText = (data['ai_response'] ?? '') as String;
+        if (holdText.isNotEmpty) {
+          _addTurn(SessionTurn(speaker: 'ai', rawTranscript: holdText));
+        }
+        final holdAudio = (data['tts_audio_b64'] ?? '') as String;
+        if (holdAudio.isNotEmpty) {
+          await _playAudio(holdAudio);
+        }
+        break;
+
+      case 'feedback_request':
+        // Show the feedback UI — keep WS open until user submits
+        final fbText = (data['text'] ?? '') as String;
+        if (fbText.isNotEmpty) {
+          _addTurn(SessionTurn(speaker: 'ai', rawTranscript: fbText));
+        }
+        final fbAudio = (data['tts_audio_b64'] ?? '') as String;
+        if (fbAudio.isNotEmpty) await _playAudio(fbAudio);
+        _feedbackCtrl.add(data);
+        break;
+
+      case 'call_ended':
+        // Backend confirmed feedback received — play goodbye and close
+        final byeText = (data['ai_response'] ?? '') as String;
+        if (byeText.isNotEmpty) {
+          _addTurn(SessionTurn(speaker: 'ai', rawTranscript: byeText));
+        }
+        final byeAudio = (data['tts_audio_b64'] ?? '') as String;
+        if (byeAudio.isNotEmpty) {
+          await _playAudio(byeAudio);
+        } else {
+          _setState(PipelineState.idle);
+        }
+        _channel?.sink.close();
+        _channel = null;
+        sessionId = null;
+        _feedbackCtrl.add(null);
+        break;
+
       case 'pong':
         break;
 
@@ -345,29 +388,33 @@ class VoicePipelineService {
     _setState(PipelineState.idle);
   }
 
-  /// End the call but keep turns in memory for transcript display.
-  /// Fetches a ticket from the backend if one hasn't been created via WS yet.
-  Future<void> endCall() async {
-    final sid = sessionId;
+  /// Signal the backend that the call is ending.
+  /// The backend will respond with hold_on → ticket_created → feedback_request.
+  /// The WS stays open until [submitFeedbackAndEnd] is called.
+  void endCall() {
+    if (_channel == null) return;
+    _verifyPromptCtrl.add(null);
+    _channel!.sink.add(jsonEncode({'type': 'end_call'}));
+  }
+
+  /// Send the citizen's feedback rating (1–5) and close the connection.
+  void submitFeedbackAndEnd(int rating) {
+    if (_channel == null) {
+      _closeConnection();
+      return;
+    }
+    _channel!.sink.add(jsonEncode({'type': 'feedback', 'rating': rating}));
+    // Connection will be closed when 'call_ended' message arrives from backend.
+    // Safety timeout: close anyway after 10 s.
+    Future.delayed(const Duration(seconds: 10), _closeConnection);
+  }
+
+  void _closeConnection() {
     _channel?.sink.close();
     _channel = null;
     sessionId = null;
-    _verifyPromptCtrl.add(null);
+    _feedbackCtrl.add(null);
     _setState(PipelineState.idle);
-
-    if (sid != null && _turns.isNotEmpty && _currentTicket == null) {
-      try {
-        final res = await http
-            .get(Uri.parse('$backendUrl/sessions/$sid/ticket'))
-            .timeout(const Duration(seconds: 5));
-        if (res.statusCode == 200) {
-          final ticket = TicketInfo.fromJson(
-              jsonDecode(res.body) as Map<String, dynamic>);
-          _currentTicket = ticket;
-          _ticketCtrl.add(ticket);
-        }
-      } catch (_) {}
-    }
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────

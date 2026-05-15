@@ -81,13 +81,33 @@ def get_clarification_prompt(language: str, attempt: int) -> str:
 
 
 def get_acknowledgment(language: str, intent: str) -> str:
-    """Acknowledgment after successful verification."""
+    """Sent after citizen confirms their issue — ticket not created yet."""
     acks = {
-        "kn": f"ಸರಿ, ನಿಮ್ಮ {_intent_label_kn(intent)} ಸಮಸ್ಯೆ ದಾಖಲಿಸಲಾಗಿದೆ. ಒಂದು ಕ್ಷಣ ತಡೆಯಿರಿ.",
-        "hi": f"ठीक है, आपकी {_intent_label_hi(intent)} की समस्या दर्ज कर ली गई है। एक पल रुकिए।",
-        "en": f"Got it. Your {intent.replace('_', ' ')} complaint has been noted. Please hold for a moment.",
+        "kn": f"ಧನ್ಯವಾದ! ನಿಮ್ಮ {_intent_label_kn(intent)} ಸಮಸ್ಯೆಯ ಎಲ್ಲ ವಿವರಗಳನ್ನು ನಾನು ದಾಖಲಿಸಿದ್ದೇನೆ. ಇನ್ನೇನಾದರೂ ಹೇಳಬೇಕೇ? ಮಾತು ಮುಗಿದಾಗ 'ಕರೆ ಕೊನೆಗೊಳಿಸಿ' ಬಟನ್ ಒತ್ತಿ.",
+        "hi": f"शुक्रिया! मैंने आपकी {_intent_label_hi(intent)} की समस्या के सभी विवरण नोट कर लिए हैं। कुछ और बताना है? जब तैयार हों तो 'कॉल समाप्त करें' दबाएं।",
+        "en": f"Thank you! I have all the details for your {intent.replace('_', ' ')} complaint. Is there anything else you'd like to add? Tap 'End call' when you're ready.",
     }
     return acks.get(language, acks["en"])
+
+
+def get_end_call_message(language: str) -> str:
+    """Spoken when the citizen taps End Call — just before ticket is created."""
+    msgs = {
+        "kn": "ಒಂದು ಕ್ಷಣ ತಡೆಯಿರಿ, ನಿಮ್ಮ ದೂರು ದಾಖಲಿಸಲಾಗುತ್ತಿದೆ...",
+        "hi": "एक पल रुकिए, आपकी शिकायत दर्ज की जा रही है...",
+        "en": "Please hold a moment while I register your complaint...",
+    }
+    return msgs.get(language, msgs["en"])
+
+
+def get_feedback_request(language: str) -> str:
+    """Spoken after ticket is created — asks citizen to rate the call."""
+    msgs = {
+        "kn": "ನಿಮ್ಮ ದೂರು ಯಶಸ್ವಿಯಾಗಿ ದಾಖಲಾಗಿದೆ! ಇಂದಿನ ಕರೆ ಹೇಗಿತ್ತು? 1 ರಿಂದ 5 ರ ಮಧ್ಯ ರೇಟ್ ಮಾಡಿ.",
+        "hi": "आपकी शिकायत सफलतापूर्वक दर्ज हो गई! आज की कॉल कैसी रही? 1 से 5 में रेट करें।",
+        "en": "Your complaint has been registered! How was your experience today? Please rate from 1 to 5.",
+    }
+    return msgs.get(language, msgs["en"])
 
 
 def _intent_label_kn(intent: str) -> str:
