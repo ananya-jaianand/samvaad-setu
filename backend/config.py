@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     # Model config
     claude_model: str = "claude-sonnet-4-20250514"
     sarvam_asr_model: str = "saarika:v2.5"
-    sarvam_tts_model: str = "bulbul:v1"
+    sarvam_tts_model: str = "bulbul:v2"
 
     # Feature flags
     enable_prosody: bool = False            # set True to activate librosa prosodic extraction
