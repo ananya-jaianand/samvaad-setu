@@ -121,6 +121,64 @@ async def get_ticket(session_id: str) -> Optional[TicketInfo]:
         return None
 
 
+async def list_tickets(
+    limit: int = 30,
+    offset: int = 0,
+    status: Optional[str] = None,
+    district: Optional[str] = None,
+) -> list[TicketInfo]:
+    """Return recent tickets from Postgres, newest first."""
+    try:
+        from db import get_session_factory
+        from models.audit_model import Ticket
+        from sqlalchemy import select, desc
+
+        factory = get_session_factory()
+        async with factory() as db:
+            q = select(Ticket).order_by(desc(Ticket.created_at)).limit(limit).offset(offset)
+            if status:
+                q = q.where(Ticket.status == status)
+            if district:
+                q = q.where(Ticket.district == district)
+            rows = (await db.execute(q)).scalars().all()
+            return [
+                TicketInfo(
+                    ticket_id=r.ticket_id,
+                    session_id=r.session_id,
+                    trigger=r.trigger,
+                    intent=r.intent,
+                    department=r.responsible_department,
+                    district=r.district,
+                    language=r.language,
+                    status=r.status,
+                    sla_days=r.sla_days,
+                    summary=r.summary,
+                    created_at=r.created_at.isoformat() if r.created_at else "",
+                )
+                for r in rows
+            ]
+    except Exception as exc:
+        print(f"[TICKET] list_tickets failed: {exc}")
+        return []
+
+
+async def update_ticket_status(session_id: str, status: str) -> None:
+    """Update a ticket's status (e.g. 'in_review' | 'resolved')."""
+    try:
+        from db import get_session_factory
+        from models.audit_model import Ticket
+        from sqlalchemy import update
+
+        factory = get_session_factory()
+        async with factory() as db:
+            await db.execute(
+                update(Ticket).where(Ticket.session_id == session_id).values(status=status)
+            )
+            await db.commit()
+    except Exception as exc:
+        print(f"[TICKET] update_ticket_status failed: {exc}")
+
+
 async def _persist(info: TicketInfo) -> None:
     from db import get_session_factory
     from models.audit_model import Ticket

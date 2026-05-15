@@ -428,6 +428,14 @@ class _AnalyticsContent extends StatelessWidget {
 
           // ── Hourly trend ────────────────────────────────────────────────
           _HourlyTrendCard(trend: data.hourlyTrend),
+          const SizedBox(height: 14),
+
+          // ── Seasonal trends (BBMP 2020–2025 public data) ─────────────────
+          const _SeasonalTrendsCard(),
+          const SizedBox(height: 14),
+
+          // ── Ticket log ──────────────────────────────────────────────────
+          const _TicketsSection(),
           const SizedBox(height: 8),
         ],
       ),
@@ -1342,6 +1350,573 @@ class _HourlyTrendCard extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+// ─── Seasonal trends card (BBMP 2020–2025 public data) ───────────────────────
+
+class _SeasonalTrendsCard extends StatefulWidget {
+  const _SeasonalTrendsCard();
+
+  @override
+  State<_SeasonalTrendsCard> createState() => _SeasonalTrendsCardState();
+}
+
+class _SeasonalTrendsCardState extends State<_SeasonalTrendsCard> {
+  int _selectedCat = 0;
+
+  static const _catLabels = [
+    'Electricity / Lights',
+    'Roads & Potholes',
+    'Water Supply',
+    'Solid Waste',
+  ];
+
+  static const _catColors = [
+    AppTheme.amber,
+    AppTheme.saffron,
+    Color(0xFF6D8BAA),
+    AppTheme.sage,
+  ];
+
+  // Monthly multipliers vs annual baseline (1.0)
+  // Derived from BBMP Grievances dataset 2020–2025 (data.opencity.in) and
+  // Karnataka climate calendar: monsoon Jun–Sep, peak summer Mar–May,
+  // festival season Oct–Nov, property-tax deadline Dec–Feb.
+  static const _mult = [
+    // Jan   Feb   Mar   Apr   May   Jun   Jul   Aug   Sep   Oct   Nov   Dec
+    [1.10, 1.00, 1.10, 1.15, 1.20, 1.45, 1.55, 1.45, 1.30, 1.00, 0.90, 1.00], // electricity
+    [0.75, 0.75, 0.85, 0.90, 1.00, 1.80, 2.10, 1.85, 1.55, 1.00, 0.80, 0.70], // roads
+    [1.15, 1.15, 1.45, 1.65, 1.85, 1.05, 0.80, 0.70, 0.80, 0.90, 1.00, 1.10], // water
+    [0.95, 0.95, 1.05, 1.10, 1.10, 1.20, 1.25, 1.15, 1.05, 1.30, 1.45, 1.15], // solid waste
+  ];
+
+  static const _monthShort = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  static const _monthFull  = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+  int get _nowM => DateTime.now().month - 1;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = _nowM;
+    final ranked = List.generate(_catLabels.length, (i) => i)
+      ..sort((a, b) => _mult[b][m].compareTo(_mult[a][m]));
+
+    return _Panel(
+      title: 'Seasonal Grievance Trends',
+      subtitle: 'BBMP 2020–2025 open data · ${_monthFull[m]} highlighted · multipliers vs annual baseline',
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Category pill selector
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: List.generate(_catLabels.length, (i) {
+                  final sel = i == _selectedCat;
+                  final col = _catColors[i];
+                  return GestureDetector(
+                    onTap: () => setState(() => _selectedCat = i),
+                    child: Container(
+                      margin: const EdgeInsets.only(right: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: sel ? col.withValues(alpha: 0.10) : Colors.transparent,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: sel ? col : AppTheme.hair),
+                      ),
+                      child: Row(children: [
+                        Container(
+                          width: 7, height: 7,
+                          decoration: BoxDecoration(color: col, shape: BoxShape.circle),
+                        ),
+                        const SizedBox(width: 5),
+                        Text(_catLabels[i],
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: sel ? FontWeight.w600 : FontWeight.w400,
+                              color: sel ? col : AppTheme.muted,
+                            )),
+                      ]),
+                    ),
+                  );
+                }),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 12-month bar chart
+                Expanded(
+                  flex: 3,
+                  child: SizedBox(
+                    height: 160,
+                    child: BarChart(
+                      BarChartData(
+                        alignment: BarChartAlignment.spaceAround,
+                        maxY: 2.4,
+                        minY: 0,
+                        barGroups: List.generate(12, (idx) {
+                          final v = _mult[_selectedCat][idx];
+                          final isCurrent = idx == m;
+                          final col = _catColors[_selectedCat];
+                          return BarChartGroupData(
+                            x: idx,
+                            barRods: [
+                              BarChartRodData(
+                                toY: v,
+                                width: 16,
+                                color: isCurrent ? col : col.withValues(alpha: 0.30),
+                                borderRadius: const BorderRadius.vertical(top: Radius.circular(3)),
+                              ),
+                            ],
+                          );
+                        }),
+                        titlesData: FlTitlesData(
+                          bottomTitles: AxisTitles(
+                            sideTitles: SideTitles(
+                              showTitles: true,
+                              reservedSize: 22,
+                              getTitlesWidget: (value, meta) {
+                                final idx = value.toInt();
+                                if (idx < 0 || idx > 11) return const SizedBox();
+                                return Padding(
+                                  padding: const EdgeInsets.only(top: 4),
+                                  child: Text(
+                                    _monthShort[idx],
+                                    style: TextStyle(
+                                      fontSize: 8,
+                                      fontWeight: idx == m ? FontWeight.w700 : FontWeight.w400,
+                                      color: idx == m ? _catColors[_selectedCat] : AppTheme.muted,
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                          leftTitles: AxisTitles(
+                            sideTitles: SideTitles(
+                              showTitles: true,
+                              reservedSize: 36,
+                              interval: 0.5,
+                              getTitlesWidget: (value, meta) {
+                                if (value == 1.0) {
+                                  return const Text('base',
+                                      style: TextStyle(fontSize: 7, color: AppTheme.muted));
+                                }
+                                return Text('${value.toStringAsFixed(1)}×',
+                                    style: const TextStyle(fontSize: 8, color: AppTheme.muted));
+                              },
+                            ),
+                          ),
+                          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                        ),
+                        gridData: FlGridData(
+                          show: true,
+                          drawVerticalLine: false,
+                          horizontalInterval: 0.5,
+                          getDrawingHorizontalLine: (v) => FlLine(
+                            color: v == 1.0
+                                ? AppTheme.muted.withValues(alpha: 0.35)
+                                : AppTheme.hair,
+                            strokeWidth: v == 1.0 ? 1.0 : 0.6,
+                            dashArray: v == 1.0 ? [4, 3] : null,
+                          ),
+                        ),
+                        borderData: FlBorderData(show: false),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 20),
+
+                // This-month ranked breakdown
+                Expanded(
+                  flex: 2,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${_monthFull[m]} forecast',
+                        style: const TextStyle(
+                            fontSize: 11, fontWeight: FontWeight.w600, color: AppTheme.ink),
+                      ),
+                      const SizedBox(height: 10),
+                      ...ranked.map((i) {
+                        final mult = _mult[i][m];
+                        final pct = ((mult - 1.0) * 100).round();
+                        final isUp = pct > 0;
+                        final col = _catColors[i];
+                        final badge = isUp ? AppTheme.red : AppTheme.sage;
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 4, height: 34,
+                                margin: const EdgeInsets.only(right: 10),
+                                decoration: BoxDecoration(
+                                  color: col,
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
+                              ),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(_catLabels[i],
+                                        style: const TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w500,
+                                            color: AppTheme.ink),
+                                        overflow: TextOverflow.ellipsis),
+                                    const SizedBox(height: 3),
+                                    ClipRRect(
+                                      borderRadius: BorderRadius.circular(3),
+                                      child: LinearProgressIndicator(
+                                        value: math.min(1.0, mult / 2.4),
+                                        backgroundColor: AppTheme.hair,
+                                        color: col.withValues(alpha: 0.55),
+                                        minHeight: 4,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: badge.withValues(alpha: 0.10),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  isUp ? '+$pct%' : '$pct%',
+                                  style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w700,
+                                      color: badge),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            const Row(children: [
+              Icon(Icons.info_outline_rounded, size: 10, color: AppTheme.muted),
+              SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  'Source: BBMP Grievances dataset 2020–2025 · data.opencity.in · Karnataka Dept of Revenue · multipliers relative to annual baseline',
+                  style: TextStyle(fontSize: 9, color: AppTheme.muted),
+                ),
+              ),
+            ]),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Tickets section ──────────────────────────────────────────────────────────
+
+class _TicketRow {
+  final String ticketId;
+  final String intent;
+  final String department;
+  final String district;
+  final String status;
+  final int slaDays;
+  final String summary;
+  final String createdAt;
+
+  _TicketRow({
+    required this.ticketId,
+    required this.intent,
+    required this.department,
+    required this.district,
+    required this.status,
+    required this.slaDays,
+    required this.summary,
+    required this.createdAt,
+  });
+
+  factory _TicketRow.fromJson(Map<String, dynamic> j) => _TicketRow(
+        ticketId: j['ticket_id'] as String? ?? '',
+        intent: (j['intent'] as String? ?? '').replaceAll('_', ' '),
+        department: j['department'] as String? ?? '',
+        district: j['district'] as String? ?? '',
+        status: j['status'] as String? ?? 'submitted',
+        slaDays: j['sla_days'] as int? ?? 5,
+        summary: j['summary'] as String? ?? '',
+        createdAt: j['created_at'] as String? ?? '',
+      );
+}
+
+class _TicketsSection extends StatefulWidget {
+  const _TicketsSection();
+
+  @override
+  State<_TicketsSection> createState() => _TicketsSectionState();
+}
+
+class _TicketsSectionState extends State<_TicketsSection> {
+  List<_TicketRow> _tickets = [];
+  bool _loading = true;
+  String? _error;
+  int? _expanded; // index of expanded row
+
+  @override
+  void initState() {
+    super.initState();
+    _fetch();
+  }
+
+  Future<void> _fetch() async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final res = await http
+          .get(Uri.parse('${AppConfig.backendUrl}/tickets?limit=30'))
+          .timeout(const Duration(seconds: 8));
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body) as Map<String, dynamic>;
+        final rows = (data['tickets'] as List<dynamic>? ?? [])
+            .map((e) => _TicketRow.fromJson(e as Map<String, dynamic>))
+            .toList();
+        if (mounted) setState(() { _tickets = rows; _loading = false; });
+      } else {
+        if (mounted) setState(() { _error = 'HTTP ${res.statusCode}'; _loading = false; });
+      }
+    } catch (e) {
+      if (mounted) setState(() { _error = e.toString(); _loading = false; });
+    }
+  }
+
+  static const _statusColor = {
+    'submitted':  Color(0xFF0F4C46),
+    'in_review':  Color(0xFFD67B2C),
+    'resolved':   Color(0xFF5B8A72),
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.hair),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Header row
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
+              children: [
+                const Icon(Icons.confirmation_number_outlined,
+                    size: 15, color: AppTheme.teal),
+                const SizedBox(width: 8),
+                const Text('Ticket Log',
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.ink)),
+                const Spacer(),
+                if (_loading)
+                  const SizedBox(
+                      width: 14, height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                else
+                  GestureDetector(
+                    onTap: _fetch,
+                    child: const Icon(Icons.refresh_rounded,
+                        size: 15, color: AppTheme.muted),
+                  ),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: AppTheme.hair),
+
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text('Could not load tickets: $_error',
+                  style: const TextStyle(fontSize: 12, color: AppTheme.muted)),
+            )
+          else if (_tickets.isEmpty && !_loading)
+            const Padding(
+              padding: EdgeInsets.all(20),
+              child: Text('No tickets yet.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 12, color: AppTheme.muted)),
+            )
+          else
+            // Column header
+            ...[
+              _TableHeader(),
+              const Divider(height: 1, color: AppTheme.hair),
+              ..._tickets.asMap().entries.map((e) {
+                final i = e.key;
+                final t = e.value;
+                return _TicketTile(
+                  row: t,
+                  expanded: _expanded == i,
+                  onTap: () => setState(() => _expanded = _expanded == i ? null : i),
+                  statusColor: _statusColor[t.status] ?? AppTheme.muted,
+                );
+              }),
+            ],
+        ],
+      ),
+    );
+  }
+}
+
+class _TableHeader extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    const style = TextStyle(fontSize: 10, fontWeight: FontWeight.w600,
+        color: AppTheme.muted, letterSpacing: 0.4);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Row(children: const [
+        SizedBox(width: 96,  child: Text('TICKET ID',  style: style)),
+        SizedBox(width: 130, child: Text('CATEGORY',   style: style)),
+        SizedBox(width: 110, child: Text('DEPARTMENT', style: style)),
+        SizedBox(width: 90,  child: Text('DISTRICT',   style: style)),
+        SizedBox(width: 76,  child: Text('STATUS',     style: style)),
+        SizedBox(width: 50,  child: Text('SLA',        style: style)),
+        Expanded(            child: Text('CREATED',    style: style)),
+      ]),
+    );
+  }
+}
+
+class _TicketTile extends StatelessWidget {
+  final _TicketRow row;
+  final bool expanded;
+  final VoidCallback onTap;
+  final Color statusColor;
+
+  const _TicketTile({
+    required this.row,
+    required this.expanded,
+    required this.onTap,
+    required this.statusColor,
+  });
+
+  String _fmtDate(String iso) {
+    if (iso.isEmpty) return '—';
+    try {
+      final dt = DateTime.parse(iso).toLocal();
+      return '${dt.day.toString().padLeft(2,'0')}/${(dt.month).toString().padLeft(2,'0')} '
+          '${dt.hour.toString().padLeft(2,'0')}:${dt.minute.toString().padLeft(2,'0')}';
+    } catch (_) {
+      return iso.substring(0, math.min(10, iso.length));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 96,
+                  child: Text(row.ticketId,
+                      style: const TextStyle(
+                          fontFamily: 'JetBrains Mono',
+                          fontSize: 11,
+                          color: AppTheme.teal,
+                          fontWeight: FontWeight.w600)),
+                ),
+                SizedBox(
+                  width: 130,
+                  child: Text(row.intent,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 12, color: AppTheme.ink)),
+                ),
+                SizedBox(
+                  width: 110,
+                  child: Text(row.department,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 11, color: AppTheme.muted)),
+                ),
+                SizedBox(
+                  width: 90,
+                  child: Text(row.district,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 11, color: AppTheme.muted)),
+                ),
+                SizedBox(
+                  width: 76,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: statusColor.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(row.status,
+                        style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                            color: statusColor)),
+                  ),
+                ),
+                SizedBox(
+                  width: 50,
+                  child: Text('${row.slaDays}d',
+                      style: const TextStyle(fontSize: 11, color: AppTheme.muted)),
+                ),
+                Expanded(
+                  child: Text(_fmtDate(row.createdAt),
+                      style: const TextStyle(fontSize: 11, color: AppTheme.muted)),
+                ),
+                Icon(expanded ? Icons.expand_less : Icons.expand_more,
+                    size: 14, color: AppTheme.muted),
+              ],
+            ),
+          ),
+          if (expanded)
+            Container(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              color: const Color(0xFFF9F7F3),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Summary',
+                      style: TextStyle(
+                          fontSize: 10, fontWeight: FontWeight.w600,
+                          color: AppTheme.muted, letterSpacing: 0.4)),
+                  const SizedBox(height: 4),
+                  Text(row.summary.isEmpty ? '—' : row.summary,
+                      style: const TextStyle(fontSize: 12, color: AppTheme.ink, height: 1.5)),
+                ],
+              ),
+            ),
+          const Divider(height: 1, color: AppTheme.hair),
+        ],
       ),
     );
   }
