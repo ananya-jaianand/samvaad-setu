@@ -32,6 +32,7 @@ class _AgentDashboardState extends State<AgentDashboard> {
 
   String _revealLang = 'en';
   bool _reviewed = false;
+  bool _isResolved = false;
   bool _showToast = false;
   String _toastTitle = '';
   String _toastBody = '';
@@ -128,6 +129,7 @@ class _AgentDashboardState extends State<AgentDashboard> {
       _liveTurns = [];
       _contextLoading = true;
       _reviewed = false;
+      _isResolved = false;
       _editedFields = {};
     });
     try {
@@ -251,6 +253,23 @@ class _AgentDashboardState extends State<AgentDashboard> {
         _activeItem = null;
         _fullContext = null;
       });
+    } catch (_) {}
+  }
+
+  Future<void> _resolveByHuman() async {
+    if (_activeItem == null) return;
+    try {
+      await http.post(
+        Uri.parse('${AppConfig.backendUrl}/sessions/${_activeItem!.sessionId}/resolve'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'agent_id': _agentId}),
+      );
+      setState(() => _isResolved = true);
+      _showToastMsg(
+        title: 'Resolved by human · ${_activeItem!.district}',
+        body: 'Ticket marked resolved, audit logged.',
+        high: false,
+      );
     } catch (_) {}
   }
 
@@ -583,7 +602,9 @@ class _AgentDashboardState extends State<AgentDashboard> {
                       item: _activeItem,
                       fields: _interpFields,
                       reviewed: _reviewed,
+                      isResolved: _isResolved,
                       onApprove: () => setState(() => _reviewed = true),
+                      onResolve: _resolveByHuman,
                       onUpdate: _sendCorrection,
                       liveConfidence: _isViewingLiveSession ? _liveConfidence : null,
                     ),
@@ -1484,14 +1505,18 @@ class _InterpPane extends StatelessWidget {
   final AgentQueueItem? item;
   final Map<String, dynamic> fields;
   final bool reviewed;
+  final bool isResolved;
   final VoidCallback onApprove;
+  final VoidCallback onResolve;
   final void Function(String, String) onUpdate;
   final ConfidenceScore? liveConfidence;
   const _InterpPane({
     required this.item,
     required this.fields,
     required this.reviewed,
+    required this.isResolved,
     required this.onApprove,
+    required this.onResolve,
     required this.onUpdate,
     this.liveConfidence,
   });
@@ -1616,6 +1641,52 @@ class _InterpPane extends StatelessWidget {
                         ],
                       ),
                     ),
+
+                    const SizedBox(height: 8),
+
+                    // ── Resolve by Human ──────────────────────────────────
+                    GestureDetector(
+                      onTap: isResolved ? null : onResolve,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 9),
+                        decoration: BoxDecoration(
+                          color: isResolved
+                              ? AppTheme.sage.withValues(alpha: 0.15)
+                              : AppTheme.red.withValues(alpha: 0.08),
+                          border: Border.all(
+                            color: isResolved ? AppTheme.sage : AppTheme.red,
+                          ),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              isResolved
+                                  ? Icons.check_circle_outline
+                                  : Icons.support_agent_rounded,
+                              size: 14,
+                              color: isResolved ? AppTheme.sage : AppTheme.red,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              isResolved ? 'Resolved by human' : 'Resolve by Human',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: isResolved ? AppTheme.sage : AppTheme.red,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    // ── Audit trail ───────────────────────────────────────
+                    if (item != null)
+                      _AuditTrailSection(sessionId: item!.sessionId),
                   ],
                 ),
               ),
@@ -2514,4 +2585,182 @@ class _SentLinePainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _SentLinePainter old) =>
       old.points != points;
+}
+
+// ─── Audit Trail Section ──────────────────────────────────────────────────────
+
+class _AuditTrailSection extends StatefulWidget {
+  final String sessionId;
+  const _AuditTrailSection({required this.sessionId});
+
+  @override
+  State<_AuditTrailSection> createState() => _AuditTrailSectionState();
+}
+
+class _AuditTrailSectionState extends State<_AuditTrailSection> {
+  bool _expanded = false;
+  bool _loading = false;
+  List<Map<String, dynamic>> _events = [];
+
+  Future<void> _load() async {
+    if (_events.isNotEmpty) return; // already fetched
+    setState(() => _loading = true);
+    try {
+      final res = await http
+          .get(Uri.parse('${AppConfig.backendUrl}/audit/${widget.sessionId}'))
+          .timeout(const Duration(seconds: 6));
+      if (res.statusCode == 200 && mounted) {
+        final body = jsonDecode(res.body) as Map<String, dynamic>;
+        final evts = (body['events'] as List<dynamic>? ?? [])
+            .map((e) => e as Map<String, dynamic>)
+            .toList();
+        setState(() { _events = evts; _loading = false; });
+      } else {
+        if (mounted) setState(() => _loading = false);
+      }
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  static const _actorIcon = {
+    'system':  Icons.memory_rounded,
+    'citizen': Icons.person_outline_rounded,
+    'agent':   Icons.support_agent_rounded,
+  };
+
+  static const _actorColor = {
+    'system':  AppTheme.muted,
+    'citizen': AppTheme.teal,
+    'agent':   AppTheme.saffron,
+  };
+
+  String _fmtTime(String? iso) {
+    if (iso == null || iso.isEmpty) return '—';
+    try {
+      final dt = DateTime.parse(iso).toLocal();
+      return '${dt.hour.toString().padLeft(2,'0')}:${dt.minute.toString().padLeft(2,'0')}:${dt.second.toString().padLeft(2,'0')}';
+    } catch (_) {
+      return iso.length > 19 ? iso.substring(11, 19) : iso;
+    }
+  }
+
+  String _fmtEventType(String t) =>
+      t.replaceAll('_', ' ');
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.agentBg,
+        border: Border.all(color: AppTheme.hair),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        children: [
+          // Header / toggle
+          InkWell(
+            onTap: () {
+              setState(() => _expanded = !_expanded);
+              if (_expanded) _load();
+            },
+            borderRadius: BorderRadius.circular(10),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+              child: Row(
+                children: [
+                  const Icon(Icons.history_rounded, size: 13, color: AppTheme.muted),
+                  const SizedBox(width: 6),
+                  const Text('Audit Trail',
+                      style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                          color: AppTheme.ink)),
+                  const Spacer(),
+                  if (_loading)
+                    const SizedBox(
+                        width: 12, height: 12,
+                        child: CircularProgressIndicator(strokeWidth: 1.5))
+                  else
+                    Icon(_expanded ? Icons.expand_less : Icons.expand_more,
+                        size: 14, color: AppTheme.muted),
+                ],
+              ),
+            ),
+          ),
+
+          if (_expanded) ...[
+            const Divider(height: 1, color: AppTheme.hair),
+            if (_events.isEmpty && !_loading)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 14),
+                child: Text('No audit events yet.',
+                    style: TextStyle(fontSize: 11, color: AppTheme.muted)),
+              )
+            else
+              ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: _events.length,
+                separatorBuilder: (_, __) =>
+                    const Divider(height: 1, color: AppTheme.hair),
+                itemBuilder: (_, i) {
+                  final ev = _events[i];
+                  final actor = ev['actor'] as String? ?? 'system';
+                  final evType = ev['event_type'] as String? ?? '';
+                  final ts = ev['timestamp'] as String? ?? '';
+                  final payload = ev['payload_json'] != null
+                      ? jsonDecode(ev['payload_json'] as String)
+                      : null;
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 7),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          _actorIcon[actor] ?? Icons.circle_outlined,
+                          size: 12,
+                          color: _actorColor[actor] ?? AppTheme.muted,
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(_fmtEventType(evType),
+                                  style: const TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppTheme.ink)),
+                              if (payload != null)
+                                Text(
+                                  (payload as Map<String, dynamic>)
+                                      .entries
+                                      .map((e) => '${e.key}: ${e.value}')
+                                      .join(' · '),
+                                  style: const TextStyle(
+                                      fontSize: 10, color: AppTheme.muted),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(_fmtTime(ts),
+                            style: const TextStyle(
+                                fontFamily: 'JetBrains Mono',
+                                fontSize: 9,
+                                color: AppTheme.muted)),
+                      ],
+                    ),
+                  );
+                },
+              ),
+          ],
+        ],
+      ),
+    );
+  }
 }

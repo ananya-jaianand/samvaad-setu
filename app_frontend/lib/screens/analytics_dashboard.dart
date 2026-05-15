@@ -428,6 +428,14 @@ class _AnalyticsContent extends StatelessWidget {
 
           // ── Hourly trend ────────────────────────────────────────────────
           _HourlyTrendCard(trend: data.hourlyTrend),
+          const SizedBox(height: 14),
+
+          // ── Seasonal trends (BBMP 2020–2025 public data) ─────────────────
+          const _SeasonalTrendsCard(),
+          const SizedBox(height: 14),
+
+          // ── Ticket log ──────────────────────────────────────────────────
+          const _TicketsSection(),
           const SizedBox(height: 8),
         ],
       ),
@@ -1342,6 +1350,296 @@ class _HourlyTrendCard extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+// ─── Tickets section ──────────────────────────────────────────────────────────
+
+class _TicketRow {
+  final String ticketId;
+  final String intent;
+  final String department;
+  final String district;
+  final String status;
+  final int slaDays;
+  final String summary;
+  final String createdAt;
+
+  _TicketRow({
+    required this.ticketId,
+    required this.intent,
+    required this.department,
+    required this.district,
+    required this.status,
+    required this.slaDays,
+    required this.summary,
+    required this.createdAt,
+  });
+
+  factory _TicketRow.fromJson(Map<String, dynamic> j) => _TicketRow(
+        ticketId: j['ticket_id'] as String? ?? '',
+        intent: (j['intent'] as String? ?? '').replaceAll('_', ' '),
+        department: j['department'] as String? ?? '',
+        district: j['district'] as String? ?? '',
+        status: j['status'] as String? ?? 'submitted',
+        slaDays: j['sla_days'] as int? ?? 5,
+        summary: j['summary'] as String? ?? '',
+        createdAt: j['created_at'] as String? ?? '',
+      );
+}
+
+class _TicketsSection extends StatefulWidget {
+  const _TicketsSection();
+
+  @override
+  State<_TicketsSection> createState() => _TicketsSectionState();
+}
+
+class _TicketsSectionState extends State<_TicketsSection> {
+  List<_TicketRow> _tickets = [];
+  bool _loading = true;
+  String? _error;
+  int? _expanded; // index of expanded row
+
+  @override
+  void initState() {
+    super.initState();
+    _fetch();
+  }
+
+  Future<void> _fetch() async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final res = await http
+          .get(Uri.parse('${AppConfig.backendUrl}/tickets?limit=30'))
+          .timeout(const Duration(seconds: 8));
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body) as Map<String, dynamic>;
+        final rows = (data['tickets'] as List<dynamic>? ?? [])
+            .map((e) => _TicketRow.fromJson(e as Map<String, dynamic>))
+            .toList();
+        if (mounted) setState(() { _tickets = rows; _loading = false; });
+      } else {
+        if (mounted) setState(() { _error = 'HTTP ${res.statusCode}'; _loading = false; });
+      }
+    } catch (e) {
+      if (mounted) setState(() { _error = e.toString(); _loading = false; });
+    }
+  }
+
+  static const _statusColor = {
+    'submitted':  Color(0xFF0F4C46),
+    'in_review':  Color(0xFFD67B2C),
+    'resolved':   Color(0xFF5B8A72),
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.hair),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Header row
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
+              children: [
+                const Icon(Icons.confirmation_number_outlined,
+                    size: 15, color: AppTheme.teal),
+                const SizedBox(width: 8),
+                const Text('Ticket Log',
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.ink)),
+                const Spacer(),
+                if (_loading)
+                  const SizedBox(
+                      width: 14, height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                else
+                  GestureDetector(
+                    onTap: _fetch,
+                    child: const Icon(Icons.refresh_rounded,
+                        size: 15, color: AppTheme.muted),
+                  ),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: AppTheme.hair),
+
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text('Could not load tickets: $_error',
+                  style: const TextStyle(fontSize: 12, color: AppTheme.muted)),
+            )
+          else if (_tickets.isEmpty && !_loading)
+            const Padding(
+              padding: EdgeInsets.all(20),
+              child: Text('No tickets yet.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 12, color: AppTheme.muted)),
+            )
+          else
+            // Column header
+            ...[
+              _TableHeader(),
+              const Divider(height: 1, color: AppTheme.hair),
+              ..._tickets.asMap().entries.map((e) {
+                final i = e.key;
+                final t = e.value;
+                return _TicketTile(
+                  row: t,
+                  expanded: _expanded == i,
+                  onTap: () => setState(() => _expanded = _expanded == i ? null : i),
+                  statusColor: _statusColor[t.status] ?? AppTheme.muted,
+                );
+              }),
+            ],
+        ],
+      ),
+    );
+  }
+}
+
+class _TableHeader extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    const style = TextStyle(fontSize: 10, fontWeight: FontWeight.w600,
+        color: AppTheme.muted, letterSpacing: 0.4);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Row(children: const [
+        SizedBox(width: 96,  child: Text('TICKET ID',  style: style)),
+        SizedBox(width: 130, child: Text('CATEGORY',   style: style)),
+        SizedBox(width: 110, child: Text('DEPARTMENT', style: style)),
+        SizedBox(width: 90,  child: Text('DISTRICT',   style: style)),
+        SizedBox(width: 76,  child: Text('STATUS',     style: style)),
+        SizedBox(width: 50,  child: Text('SLA',        style: style)),
+        Expanded(            child: Text('CREATED',    style: style)),
+      ]),
+    );
+  }
+}
+
+class _TicketTile extends StatelessWidget {
+  final _TicketRow row;
+  final bool expanded;
+  final VoidCallback onTap;
+  final Color statusColor;
+
+  const _TicketTile({
+    required this.row,
+    required this.expanded,
+    required this.onTap,
+    required this.statusColor,
+  });
+
+  String _fmtDate(String iso) {
+    if (iso.isEmpty) return '—';
+    try {
+      final dt = DateTime.parse(iso).toLocal();
+      return '${dt.day.toString().padLeft(2,'0')}/${(dt.month).toString().padLeft(2,'0')} '
+          '${dt.hour.toString().padLeft(2,'0')}:${dt.minute.toString().padLeft(2,'0')}';
+    } catch (_) {
+      return iso.substring(0, math.min(10, iso.length));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 96,
+                  child: Text(row.ticketId,
+                      style: const TextStyle(
+                          fontFamily: 'JetBrains Mono',
+                          fontSize: 11,
+                          color: AppTheme.teal,
+                          fontWeight: FontWeight.w600)),
+                ),
+                SizedBox(
+                  width: 130,
+                  child: Text(row.intent,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 12, color: AppTheme.ink)),
+                ),
+                SizedBox(
+                  width: 110,
+                  child: Text(row.department,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 11, color: AppTheme.muted)),
+                ),
+                SizedBox(
+                  width: 90,
+                  child: Text(row.district,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 11, color: AppTheme.muted)),
+                ),
+                SizedBox(
+                  width: 76,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: statusColor.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(row.status,
+                        style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                            color: statusColor)),
+                  ),
+                ),
+                SizedBox(
+                  width: 50,
+                  child: Text('${row.slaDays}d',
+                      style: const TextStyle(fontSize: 11, color: AppTheme.muted)),
+                ),
+                Expanded(
+                  child: Text(_fmtDate(row.createdAt),
+                      style: const TextStyle(fontSize: 11, color: AppTheme.muted)),
+                ),
+                Icon(expanded ? Icons.expand_less : Icons.expand_more,
+                    size: 14, color: AppTheme.muted),
+              ],
+            ),
+          ),
+          if (expanded)
+            Container(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              color: const Color(0xFFF9F7F3),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Summary',
+                      style: TextStyle(
+                          fontSize: 10, fontWeight: FontWeight.w600,
+                          color: AppTheme.muted, letterSpacing: 0.4)),
+                  const SizedBox(height: 4),
+                  Text(row.summary.isEmpty ? '—' : row.summary,
+                      style: const TextStyle(fontSize: 12, color: AppTheme.ink, height: 1.5)),
+                ],
+              ),
+            ),
+          const Divider(height: 1, color: AppTheme.hair),
+        ],
       ),
     );
   }

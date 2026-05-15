@@ -389,11 +389,26 @@ async def resolve_session(session_id: str, body: dict = {}):
     session.is_resolved = True
     await session_manager.save_session(session)
     await remove_from_queue(session_id)
+    await ticket_service.update_ticket_status(session_id, "resolved")
     await log_event(
         session_id, "session_resolved", actor="agent",
         payload={"agent_id": agent_id},
     )
     return {"ok": True, "session_id": session_id}
+
+
+@app.get("/tickets")
+async def list_tickets_endpoint(
+    limit: int = 30,
+    offset: int = 0,
+    status: Optional[str] = None,
+    district: Optional[str] = None,
+):
+    """List recent tickets for the analytics dashboard."""
+    tickets = await ticket_service.list_tickets(
+        limit=limit, offset=offset, status=status, district=district
+    )
+    return {"tickets": [t.model_dump() for t in tickets], "total": len(tickets)}
 
 
 @app.get("/training-data/export")
