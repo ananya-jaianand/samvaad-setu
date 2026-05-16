@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -495,11 +496,19 @@ class VoicePipelineService {
       final bytes = base64Decode(b64);
       // Skip playback for stub audio (≤ 100 bytes = mock silent WAV)
       if (bytes.length > 100) {
-        // Timeout = actual audio duration + 1.5 s buffer.
-        // WAV PCM 24 kHz 16-bit mono = 48 000 bytes/s.
-        final pcmBytes = bytes.length > 44 ? bytes.length - 44 : bytes.length;
-        final estMs = ((pcmBytes / 48000) * 1000).round() + 1500;
-        final timeout = Duration(milliseconds: estMs.clamp(2000, 12000));
+        // Parse ByteRate from WAV header (offset 28, little-endian uint32).
+        // Works for any sample rate — Sarvam 8 kHz or Gemini 24 kHz.
+        int byteRate = 16000; // safe fallback for Sarvam 8 kHz mono 16-bit
+        int dataSize = bytes.length - 44;
+        if (bytes.length > 43) {
+          final bd = bytes.buffer.asByteData();
+          final rate = bd.getUint32(28, Endian.little);
+          final sz   = bd.getUint32(40, Endian.little);
+          if (rate > 0) byteRate = rate;
+          if (sz > 0 && sz < bytes.length) dataSize = sz;
+        }
+        final estMs = ((dataSize / byteRate) * 1000).round() + 800;
+        final timeout = Duration(milliseconds: estMs.clamp(2000, 15000));
 
         if (kIsWeb) {
           await _audioPlayer.play(UrlSource('data:audio/wav;base64,$b64'));

@@ -255,6 +255,13 @@ async def _ss_serve(
         "mock_mode": settings.environment == "mock",
     })
     try:
+        # Dismiss any verification panel left over from a previous turn
+        await websocket.send_json({
+            "type": "verification_result",
+            "state": "confirmed",
+            "ai_response": "",
+            "tts_audio_b64": "",
+        })
         await websocket.send_json({
             "type": "nlu_update",
             "session_id": session.session_id,
@@ -704,6 +711,10 @@ async def resolve_session(session_id: str, body: dict = {}):
     session.is_resolved = True
     await session_manager.save_session(session)
     await remove_from_queue(session_id)
+    # Demo/mock sessions may not have a DB ticket yet — create one before updating.
+    existing = await ticket_service.get_ticket(session_id)
+    if not existing:
+        await ticket_service.create_ticket(session, "escalated")
     await ticket_service.update_ticket_status(session_id, "resolved")
     await log_event(
         session_id, "session_resolved", actor="agent",
@@ -1401,49 +1412,10 @@ async def _handle_verification_response(websocket: WebSocket, session: SessionSt
 
     if action == "confirmed":
         if session.conversation_stage == "gathering_info":
-            # Citizen confirmed basic understanding — advance to seeking_confirmation
-            # and immediately ask for final registration confirmation.
-            session.conversation_stage = "seeking_confirmation"
-            confirm_asks = {
-                "kn": f"ಸರಿ, ತಿಳಿಯಿತು! ನಿಮ್ಮ {(session.final_intent or 'ದೂರು').replace('_', ' ')} ಬಗ್ಗೆ ದೂರು ದಾಖಲಿಸಲೇ?",
-                "hi": f"ठीक है! आपकी {(session.final_intent or 'शिकायत').replace('_', ' ')} दर्ज करूं?",
-                "en": f"Got it! Shall I go ahead and register your {(session.final_intent or 'complaint').replace('_', ' ')}?",
-            }
-            ack_text = confirm_asks.get(language, confirm_asks["en"])
-            tts_audio = ""
-            try:
-                tts_audio = await tts.synthesize(ack_text, language=language)
-            except Exception:
-                pass
-            ai_turn = Turn(speaker="ai", raw_transcript=ack_text, tts_audio_b64=tts_audio)
-            session.add_turn(ai_turn)
-            await websocket.send_json({
-                "type": "verification_result",
-                "state": "gathering_confirmed",
-                "ai_response": ack_text,
-                "tts_audio_b64": tts_audio,
-                "session_id": session.session_id,
-                "conversation_stage": "seeking_confirmation",
-            })
-            # Send a fresh verification_prompt for the registration confirmation step
-            confirm_prompt = _verification_engine.generate_verification_prompt(
-                intent=session.final_intent or "other_grievance",
-                entities={},
-                language=language,
-                district=session.district,
-            )
-            await websocket.send_json({
-                "type": "verification_prompt",
-                "text": confirm_prompt,
-                "language": language,
-                "district": session.district,
-                "session_id": session.session_id,
-                "conversation_stage": "seeking_confirmation",
-            })
-            print(f"[VERIFICATION] gathering_info confirmed — advancing to seeking_confirmation")
-            return
+            # Skip the intermediate "Shall I register?" step — go straight to confirmed_ready.
+            session.conversation_stage = "confirmed_ready"
 
-        # seeking_confirmation or confirmed_ready confirmed — ready to create ticket on end_call
+        # confirmed_ready — acknowledge and let end_call create the ticket
         session.conversation_stage = "confirmed_ready"
         ack_text = verification.get_acknowledgment(language, session.final_intent or "other_grievance")
         tts_audio = ""
