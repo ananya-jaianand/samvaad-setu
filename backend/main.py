@@ -163,9 +163,14 @@ _SS: dict[str, list[dict]] = {
 
 # session_id → (scenario_key, next_expected_turn_index)
 _ss_state: dict[str, tuple[str, int]] = {}
-# scenario_key_turn_index → base64 TTS audio
+# scenario_key_turn_index → base64 TTS audio — loaded from disk at import time
 _ss_tts: dict[str, str] = {}
 _SS_TTS_CACHE_FILE = Path(__file__).parent / "demo_fixtures" / "ss_tts_cache.json"
+try:
+    _ss_tts.update(json.loads(_SS_TTS_CACHE_FILE.read_text()))
+    print(f"[INIT] Scenario TTS preloaded: {len(_ss_tts)} clips")
+except Exception:
+    pass
 
 
 def _ss_match(session_id: str, transcript: str) -> Optional[tuple[str, int, dict]]:
@@ -385,8 +390,6 @@ async def _startup():
         print(f"[STARTUP] Seeded {len(demo_sessions)} demo sessions into agent queue")
     except Exception as exc:
         print(f"[STARTUP] Demo seed failed (non-fatal): {exc}")
-
-    asyncio.create_task(_warmup_ss_tts())
 
 app.add_middleware(LatencyMiddleware)
 app.add_middleware(
