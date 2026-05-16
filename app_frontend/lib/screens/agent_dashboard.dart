@@ -264,12 +264,17 @@ class _AgentDashboardState extends State<AgentDashboard> {
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'agent_id': _agentId}),
       );
-      setState(() => _isResolved = true);
       _showToastMsg(
         title: 'Resolved by human · ${_activeItem!.district}',
         body: 'Ticket marked resolved, audit logged.',
         high: false,
       );
+      await _fetchQueue();
+      setState(() {
+        _isResolved = true;
+        _activeItem = null;
+        _fullContext = null;
+      });
     } catch (_) {}
   }
 

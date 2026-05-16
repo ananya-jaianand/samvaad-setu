@@ -181,7 +181,7 @@ class _AnalyticsDashboardState extends State<AnalyticsDashboard> {
   void initState() {
     super.initState();
     _fetchData();
-    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) => _fetchData());
+    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) { _fetchData(); });
   }
 
   @override
@@ -1614,6 +1614,8 @@ class _SeasonalTrendsCardState extends State<_SeasonalTrendsCard> {
                 ),
               ],
             ),
+            const SizedBox(height: 14),
+            _buildNextMonthStrip(),
             const SizedBox(height: 10),
             const Row(children: [
               Icon(Icons.info_outline_rounded, size: 10, color: AppTheme.muted),
@@ -1627,6 +1629,81 @@ class _SeasonalTrendsCardState extends State<_SeasonalTrendsCard> {
             ]),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildNextMonthStrip() {
+    final nextM = (_nowM + 1) % 12;
+    final entries = List.generate(_catLabels.length, (i) => (idx: i, delta: _mult[i][nextM] - _mult[i][_nowM]))
+      ..sort((a, b) => b.delta.abs().compareTo(a.delta.abs()));
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppTheme.agentBg,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppTheme.hair),
+      ),
+      child: Row(
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Next month', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w600, color: AppTheme.muted, letterSpacing: 0.3)),
+              Text(_monthShort[nextM], style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppTheme.ink)),
+            ],
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Row(
+              children: entries.map((e) {
+                final pct = (e.delta * 100).round();
+                final isUp = e.delta > 0.015;
+                final isDown = e.delta < -0.015;
+                final col = _catColors[e.idx];
+                final badge = isUp ? AppTheme.red : (isDown ? AppTheme.sage : AppTheme.muted);
+                final icon = isUp ? Icons.trending_up_rounded : (isDown ? Icons.trending_down_rounded : Icons.trending_flat_rounded);
+                return Expanded(
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: badge.withValues(alpha: 0.07),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: badge.withValues(alpha: 0.18)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(width: 5, height: 5, decoration: BoxDecoration(color: col, shape: BoxShape.circle)),
+                            const SizedBox(width: 5),
+                            Flexible(
+                              child: Text(
+                                _catLabels[e.idx],
+                                style: const TextStyle(fontSize: 9, color: AppTheme.muted),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 5),
+                            Icon(icon, size: 11, color: badge),
+                            const SizedBox(width: 2),
+                            Text(
+                              pct == 0 ? '—' : (isUp ? '+$pct%' : '$pct%'),
+                              style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: badge),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -379,6 +379,15 @@ class VoicePipelineService {
   void sendVerificationResponse(String state, {String? correctionText}) {
     if (_channel == null) return;
     _setState(PipelineState.processing);
+    // Add the citizen's confirmation choice to the transcript immediately.
+    final confirmLabel = correctionText?.isNotEmpty == true
+        ? correctionText!
+        : state == 'correct'
+            ? 'Yes, that\'s correct'
+            : state == 'partial'
+                ? 'Partly correct'
+                : 'No, that\'s not right';
+    _addTurn(SessionTurn(speaker: 'citizen', rawTranscript: confirmLabel));
     final payload = <String, dynamic>{
       'type': 'verification_response',
       'state': state,
@@ -473,7 +482,12 @@ class VoicePipelineService {
       final bytes = base64Decode(b64);
       // Skip playback for stub audio (≤ 100 bytes = mock silent WAV)
       if (bytes.length > 100) {
-        await _audioPlayer.play(BytesSource(bytes));
+        // BytesSource is not supported on web — use a data URI instead.
+        if (kIsWeb) {
+          await _audioPlayer.play(UrlSource('data:audio/wav;base64,$b64'));
+        } else {
+          await _audioPlayer.play(BytesSource(bytes));
+        }
         await _audioPlayer.onPlayerComplete.first
             .timeout(const Duration(seconds: 30), onTimeout: () {});
       }
