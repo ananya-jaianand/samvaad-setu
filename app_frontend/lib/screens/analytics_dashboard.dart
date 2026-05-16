@@ -1750,6 +1750,7 @@ class _SeasonalTrendsCardState extends State<_SeasonalTrendsCard> {
 
 class _TicketRow {
   final String ticketId;
+  final String sessionId;
   final String intent;
   final String department;
   final String district;
@@ -1760,6 +1761,7 @@ class _TicketRow {
 
   _TicketRow({
     required this.ticketId,
+    required this.sessionId,
     required this.intent,
     required this.department,
     required this.district,
@@ -1771,6 +1773,7 @@ class _TicketRow {
 
   factory _TicketRow.fromJson(Map<String, dynamic> j) => _TicketRow(
         ticketId: j['ticket_id'] as String? ?? '',
+        sessionId: j['session_id'] as String? ?? '',
         intent: (j['intent'] as String? ?? '').replaceAll('_', ' '),
         department: j['department'] as String? ?? '',
         district: j['district'] as String? ?? '',
@@ -1792,7 +1795,9 @@ class _TicketsSectionState extends State<_TicketsSection> {
   List<_TicketRow> _tickets = [];
   bool _loading = true;
   String? _error;
-  int? _expanded; // index of expanded row
+  int? _expanded;
+  final Map<int, Map<String, dynamic>?> _contexts = {};
+  final Set<int> _loadingContexts = {};
 
   @override
   void initState() {
@@ -1811,13 +1816,37 @@ class _TicketsSectionState extends State<_TicketsSection> {
         final rows = (data['tickets'] as List<dynamic>? ?? [])
             .map((e) => _TicketRow.fromJson(e as Map<String, dynamic>))
             .toList();
-        if (mounted) setState(() { _tickets = rows; _loading = false; });
+        if (mounted) setState(() { _tickets = rows; _loading = false; _contexts.clear(); });
       } else {
         if (mounted) setState(() { _error = 'HTTP ${res.statusCode}'; _loading = false; });
       }
     } catch (e) {
       if (mounted) setState(() { _error = e.toString(); _loading = false; });
     }
+  }
+
+  Future<void> _fetchContext(int i, String sessionId) async {
+    if (_contexts.containsKey(i) || sessionId.isEmpty) return;
+    setState(() => _loadingContexts.add(i));
+    try {
+      final res = await http
+          .get(Uri.parse('${AppConfig.backendUrl}/sessions/$sessionId/full-context'))
+          .timeout(const Duration(seconds: 8));
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body) as Map<String, dynamic>;
+        if (mounted) setState(() { _contexts[i] = data; _loadingContexts.remove(i); });
+      } else {
+        if (mounted) setState(() { _contexts[i] = null; _loadingContexts.remove(i); });
+      }
+    } catch (_) {
+      if (mounted) setState(() { _contexts[i] = null; _loadingContexts.remove(i); });
+    }
+  }
+
+  void _toggleExpand(int i, String sessionId) {
+    final closing = _expanded == i;
+    setState(() => _expanded = closing ? null : i);
+    if (!closing) _fetchContext(i, sessionId);
   }
 
   static const _statusColor = {
@@ -1837,7 +1866,6 @@ class _TicketsSectionState extends State<_TicketsSection> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Header row
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             child: Row(
@@ -1880,7 +1908,6 @@ class _TicketsSectionState extends State<_TicketsSection> {
                   style: TextStyle(fontSize: 12, color: AppTheme.muted)),
             )
           else
-            // Column header
             ...[
               _TableHeader(),
               const Divider(height: 1, color: AppTheme.hair),
@@ -1890,8 +1917,10 @@ class _TicketsSectionState extends State<_TicketsSection> {
                 return _TicketTile(
                   row: t,
                   expanded: _expanded == i,
-                  onTap: () => setState(() => _expanded = _expanded == i ? null : i),
+                  onTap: () => _toggleExpand(i, t.sessionId),
                   statusColor: _statusColor[t.status] ?? AppTheme.muted,
+                  context_: _contexts[i],
+                  contextLoading: _loadingContexts.contains(i),
                 );
               }),
             ],
@@ -1926,12 +1955,16 @@ class _TicketTile extends StatelessWidget {
   final bool expanded;
   final VoidCallback onTap;
   final Color statusColor;
+  final Map<String, dynamic>? context_;
+  final bool contextLoading;
 
   const _TicketTile({
     required this.row,
     required this.expanded,
     required this.onTap,
     required this.statusColor,
+    this.context_,
+    this.contextLoading = false,
   });
 
   String _fmtDate(String iso) {
@@ -1945,8 +1978,130 @@ class _TicketTile extends StatelessWidget {
     }
   }
 
+  static const _speakerColor = {
+    'citizen': AppTheme.teal,
+    'ai':      AppTheme.ink,
+    'agent':   Color(0xFFF5A623),
+  };
+
+  Widget _detailPanel(BuildContext ctx) {
+    if (contextLoading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 16),
+        child: Center(child: SizedBox(width: 16, height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2))),
+      );
+    }
+
+    const labelStyle = TextStyle(fontSize: 10, fontWeight: FontWeight.w600,
+        color: AppTheme.muted, letterSpacing: 0.4);
+    const valueStyle = TextStyle(fontSize: 12, color: AppTheme.ink, height: 1.5);
+
+    final cx = context_;
+    final turns = cx != null
+        ? (cx['transcript'] as List<dynamic>? ?? [])
+        : <dynamic>[];
+    final conf = cx?['composite_confidence'];
+    final lang = cx?['detected_language'] as String? ?? '';
+    final dialect = cx?['dialect_tag'] as String? ?? '';
+    final escReason = cx?['escalation_reason'] as String? ?? '';
+    final escSummary = cx?['escalation_summary'] as String? ?? '';
+    final structIntent = cx?['structured_intent'] as Map<String, dynamic>?;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // ── Summary ────────────────────────────────────────────────
+        const Text('SUMMARY', style: labelStyle),
+        const SizedBox(height: 4),
+        Text(row.summary.isEmpty ? '—' : row.summary, style: valueStyle),
+        const SizedBox(height: 12),
+
+        // ── Session meta ────────────────────────────────────────────
+        if (cx != null) ...[
+          const Text('SESSION', style: labelStyle),
+          const SizedBox(height: 4),
+          Wrap(spacing: 16, runSpacing: 4, children: [
+            if (lang.isNotEmpty)
+              Text('Language: $lang', style: valueStyle),
+            if (dialect.isNotEmpty)
+              Text('Dialect: $dialect', style: valueStyle),
+            if (conf != null)
+              Text('Confidence: ${(conf as num).toStringAsFixed(2)}',
+                  style: valueStyle),
+            if (turns.isNotEmpty)
+              Text('Turns: ${turns.length}', style: valueStyle),
+          ]),
+          const SizedBox(height: 12),
+
+          // ── Structured intent ───────────────────────────────────
+          if (structIntent != null) ...[
+            const Text('INTENT', style: labelStyle),
+            const SizedBox(height: 4),
+            Wrap(spacing: 16, runSpacing: 4, children: [
+              Text(structIntent['label_en'] as String? ?? row.intent,
+                  style: valueStyle),
+              Text('Dept: ${structIntent['responsible_department'] ?? row.department}',
+                  style: const TextStyle(fontSize: 12, color: AppTheme.muted, height: 1.5)),
+            ]),
+            const SizedBox(height: 12),
+          ],
+
+          // ── Escalation info ─────────────────────────────────────
+          if (escReason.isNotEmpty) ...[
+            const Text('ESCALATION', style: labelStyle),
+            const SizedBox(height: 4),
+            Text('Reason: $escReason', style: valueStyle),
+            if (escSummary.isNotEmpty) ...[
+              const SizedBox(height: 2),
+              Text(escSummary, style: const TextStyle(fontSize: 12,
+                  color: AppTheme.muted, height: 1.5)),
+            ],
+            const SizedBox(height: 12),
+          ],
+
+          // ── Transcript ──────────────────────────────────────────
+          if (turns.isNotEmpty) ...[
+            const Text('TRANSCRIPT', style: labelStyle),
+            const SizedBox(height: 6),
+            ...turns.map((t) {
+              final turn = t as Map<String, dynamic>;
+              final speaker = turn['speaker'] as String? ?? 'ai';
+              final text = (turn['en_text'] as String?)?.isNotEmpty == true
+                  ? turn['en_text'] as String
+                  : (turn['raw_transcript'] as String? ?? '');
+              final color = _speakerColor[speaker] ?? AppTheme.muted;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      width: 52,
+                      child: Text(speaker.toUpperCase(),
+                          style: TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                              color: color,
+                              letterSpacing: 0.5)),
+                    ),
+                    Expanded(
+                      child: Text(text.isEmpty ? '—' : text,
+                          style: const TextStyle(
+                              fontSize: 12, color: AppTheme.ink, height: 1.4)),
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ],
+        ],
+      ],
+    );
+  }
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext ctx) {
     return InkWell(
       onTap: onTap,
       child: Column(
@@ -2014,20 +2169,9 @@ class _TicketTile extends StatelessWidget {
           ),
           if (expanded)
             Container(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
               color: const Color(0xFFF9F7F3),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Summary',
-                      style: TextStyle(
-                          fontSize: 10, fontWeight: FontWeight.w600,
-                          color: AppTheme.muted, letterSpacing: 0.4)),
-                  const SizedBox(height: 4),
-                  Text(row.summary.isEmpty ? '—' : row.summary,
-                      style: const TextStyle(fontSize: 12, color: AppTheme.ink, height: 1.5)),
-                ],
-              ),
+              child: _detailPanel(ctx),
             ),
           const Divider(height: 1, color: AppTheme.hair),
         ],
