@@ -119,11 +119,15 @@ class _CitizenViewState extends State<CitizenView>
         final state = stateSnap.data ?? PipelineState.idle;
         final stateKey = _stateKey(state);
         final isListening = state == PipelineState.listening;
-        final isActive = isListening || state == PipelineState.speaking;
+        final isSpeaking = state == PipelineState.speaking;
+        final isActive = isListening || isSpeaking;
         final isEscalated = state == PipelineState.escalated;
         final canRecord = state == PipelineState.ready;
         final isProcessing =
             state == PipelineState.processing || state == PipelineState.starting;
+        final sessionActive = state != PipelineState.idle &&
+            state != PipelineState.starting &&
+            state != PipelineState.error;
 
         return StreamBuilder<List<SessionTurn>>(
           stream: _svc.turnsStream,
@@ -217,12 +221,14 @@ class _CitizenViewState extends State<CitizenView>
                                         _MicRings(
                                           state: state,
                                           breathe: _breathe,
+                                          isSpeaking: isSpeaking,
                                         ),
                                         _MicBars(
                                           ctrl: _barsCtrl,
                                           active: isActive,
                                           isProcessing: isProcessing,
                                           isEscalated: isEscalated,
+                                          isSpeaking: isSpeaking,
                                         ),
                                       ],
                                     ),
@@ -315,10 +321,8 @@ class _CitizenViewState extends State<CitizenView>
                                     ),
                                   ),
 
-                                // End call button
-                                if (canRecord ||
-                                    isListening ||
-                                    state == PipelineState.verifying)
+                                // End call button — visible any time a session is active
+                                if (sessionActive && !isEscalated)
                                   Padding(
                                     padding: const EdgeInsets.only(top: 12),
                                     child: GestureDetector(
@@ -516,7 +520,12 @@ class _CitizenViewState extends State<CitizenView>
 class _MicRings extends StatelessWidget {
   final PipelineState state;
   final AnimationController breathe;
-  const _MicRings({required this.state, required this.breathe});
+  final bool isSpeaking;
+  const _MicRings({
+    required this.state,
+    required this.breathe,
+    this.isSpeaking = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -529,13 +538,35 @@ class _MicRings extends StatelessWidget {
         final t = breathe.value;
         final scale = 0.95 + 0.13 * t;
         final opacity = 0.6 + 0.4 * t;
+
+        // Ring border opacity dims when AI is speaking to signal "not your turn"
+        final ringAlpha = isSpeaking ? 0.10 : 1.0;
+
         return Stack(
           alignment: Alignment.center,
           children: [
-            _ring(320, AppTheme.teal.withValues(alpha: 0.18)),
-            _ring(260, AppTheme.teal.withValues(alpha: 0.14)),
-            _ring(200, AppTheme.teal.withValues(alpha: 0.10)),
-            if (isListening || isDistress)
+            _ring(320, AppTheme.teal.withValues(alpha: 0.18 * ringAlpha)),
+            _ring(260, AppTheme.teal.withValues(alpha: 0.14 * ringAlpha)),
+            _ring(200, AppTheme.teal.withValues(alpha: 0.10 * ringAlpha)),
+            // Teal glow when AI is speaking — distinct from saffron for listening
+            if (isSpeaking)
+              Transform.scale(
+                scale: scale,
+                child: Container(
+                  width: 284,
+                  height: 284,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [
+                        AppTheme.teal.withValues(alpha: 0.28 * opacity),
+                        AppTheme.teal.withValues(alpha: 0),
+                      ],
+                    ),
+                  ),
+                ),
+              )
+            else if (isListening || isDistress)
               Transform.scale(
                 scale: scale,
                 child: Container(
@@ -580,11 +611,13 @@ class _MicBars extends StatelessWidget {
   final bool active;
   final bool isProcessing;
   final bool isEscalated;
+  final bool isSpeaking;
   const _MicBars({
     required this.ctrl,
     required this.active,
     required this.isProcessing,
     required this.isEscalated,
+    this.isSpeaking = false,
   });
 
   @override
@@ -606,11 +639,21 @@ class _MicBars extends StatelessWidget {
                     ? 0.3 + 0.2 * math.sin((phase + i * 0.15) * math.pi)
                     : 0.15;
             final h = (120.0 * barHeights[i] * scale).clamp(4.0, 108.0);
-            final topColor = isEscalated ? AppTheme.sage : AppTheme.saffron;
-            final botColor = isEscalated ? AppTheme.teal2 : AppTheme.teal;
+            // Teal bars = AI speaking  |  saffron bars = citizen listening
+            final topColor = isEscalated
+                ? AppTheme.sage
+                : isSpeaking
+                    ? AppTheme.teal
+                    : AppTheme.saffron;
+            final botColor = isEscalated
+                ? AppTheme.teal2
+                : isSpeaking
+                    ? AppTheme.sage
+                    : AppTheme.teal;
             return Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: Container(
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 300),
                 width: 10,
                 height: h,
                 decoration: BoxDecoration(
