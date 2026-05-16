@@ -329,8 +329,8 @@ class VoicePipelineService {
       }
       if (await _record.hasPermission()) {
         await _record.start(
-          const RecordConfig(encoder: AudioEncoder.wav),
-          path: kIsWeb ? 'audio.wav' : '/tmp/samvaad_record.wav',
+          kIsWeb ? const RecordConfig() : const RecordConfig(encoder: AudioEncoder.wav),
+          path: kIsWeb ? null : '/tmp/samvaad_record.wav',
         );
         _setState(PipelineState.listening);
       } else {

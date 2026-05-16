@@ -64,8 +64,7 @@ class _CitizenViewState extends State<CitizenView>
       vsync: this,
       duration: const Duration(milliseconds: 1100),
     )..repeat(reverse: true);
-
-    _svc.startSession(language: _lang, district: AppConfig.defaultDistrict);
+    // Removed auto startSession to fix browser autoplay issue
   }
 
   @override
@@ -209,7 +208,9 @@ class _CitizenViewState extends State<CitizenView>
                                 // Mic visualizer
                                 GestureDetector(
                                   onTap: () {
-                                    if (isListening) {
+                                    if (state == PipelineState.idle) {
+                                      _svc.startSession(language: _lang, district: AppConfig.defaultDistrict);
+                                    } else if (isListening) {
                                       _svc.stopRecording();
                                     } else if (canRecord) {
                                       _svc.startRecording();
