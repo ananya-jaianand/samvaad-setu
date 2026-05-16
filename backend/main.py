@@ -794,6 +794,7 @@ async def _handle_audio_turn(websocket: WebSocket, session: SessionState, msg: d
     session.add_turn(ai_turn)
 
     # ── 5. Send audio to citizen immediately ───────────────────────────────
+    session.verification_state = "pending"
     await websocket.send_json({
         "type": "turn_update",
         "citizen_turn": citizen_turn.model_dump(mode="json"),
@@ -813,28 +814,29 @@ async def _handle_audio_turn(websocket: WebSocket, session: SessionState, msg: d
     })
     print(f"[WS] turn_update sent ← audio on its way to citizen")
 
-    # Show verification panel only after 3 citizen turns and only once (pending = not yet asked).
-    if len(session.citizen_turns()) >= 3 and session.verification_state == "pending":
-        verify_panel_text = _verification_engine.generate_verification_prompt(
-            intent=session.final_intent or "other_grievance",
-            entities={},
-            language=language,
-            district=district,
-        )
-        verify_tts = ""
-        try:
-            verify_tts = await tts.synthesize(verify_panel_text, language=language)
-        except Exception:
-            pass
-        await websocket.send_json({
-            "type": "verification_prompt",
-            "text": verify_panel_text,
-            "tts_audio_b64": verify_tts,
-            "language": language,
-            "district": district,
-            "session_id": session.session_id,
-            "conversation_stage": session.conversation_stage,
-        })
+    # Always show Yes/Partly/No panel so citizen can confirm understanding.
+    # Synthesise TTS for the verification question so it is spoken after the
+    # main AI response — the frontend plays both sequentially via its audio chain.
+    verify_panel_text = _verification_engine.generate_verification_prompt(
+        intent=session.final_intent or "other_grievance",
+        entities={},
+        language=language,
+        district=district,
+    )
+    verify_tts = ""
+    try:
+        verify_tts = await tts.synthesize(verify_panel_text, language=language)
+    except Exception:
+        pass
+    await websocket.send_json({
+        "type": "verification_prompt",
+        "text": verify_panel_text,
+        "tts_audio_b64": verify_tts,
+        "language": language,
+        "district": district,
+        "session_id": session.session_id,
+        "conversation_stage": session.conversation_stage,
+    })
 
     # ── 6. Background: full NLU + sentiment + escalation (non-blocking) ────
     # Runs while the citizen is listening to the TTS audio.
@@ -1055,19 +1057,15 @@ async def _handle_verification_response(websocket: WebSocket, session: SessionSt
 
     print(f"[VERIFICATION] Response: state={state}, correction_text={correction_text}")
 
-    if state == "correct":
-        session.verification_state = "confirmed"
-        await _handle_end_call(websocket, session)
-    else:
-        # Partly / No — dismiss panel and keep gathering; don't re-show on next turns.
-        session.verification_state = "partial" if state == "partial" else "rejected"
-        await websocket.send_json({
-            "type": "verification_result",
-            "state": "confirmed",
-            "ai_response": "",
-            "tts_audio_b64": "",
-            "session_id": session.session_id,
-        })
+    # Yes / Partly / No all do the same thing: dismiss the panel and keep going.
+    # Registration only happens on end_call — never mid-conversation.
+    await websocket.send_json({
+        "type": "verification_result",
+        "state": "confirmed",
+        "ai_response": "",
+        "tts_audio_b64": "",
+        "session_id": session.session_id,
+    })
 
 
 
