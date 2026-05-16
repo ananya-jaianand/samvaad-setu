@@ -506,7 +506,7 @@ class VoicePipelineService {
           _audioPlayer.onPlayerStateChanged
               .where((s) => s == PlayerState.completed || s == PlayerState.stopped)
               .first,
-          Future.delayed(const Duration(seconds: 10)),
+          Future.delayed(const Duration(seconds: 5)),
         ]);
       }
     } catch (_) {}
