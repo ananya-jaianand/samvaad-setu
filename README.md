@@ -74,6 +74,76 @@ sequenceDiagram
 
 ## Features
 
+### Analytics Dashboard
+
+A regional overview screen at `/analytics`, auto-refreshing every 10 seconds.
+
+**Stat cards:** Total Calls today · Escalated % · Resolved % (with "N resolved by human agent" sub-label) · Avg Confidence · Avg Distress
+
+**Karnataka district map** (flutter_map + OpenStreetMap) — each district rendered as a bubble marker. Color encodes distress level (green → amber → red); size scales with call volume. Tap for a tooltip with district name, call count, escalation count, and primary intent.
+
+**Charts:** District bar chart (calls + escalated overlay) · Intent distribution pie (8 categories) · Escalation reasons bar (High Distress / Repeated Clarification / Low Confidence) · Language distribution donut · Hourly trend line (8am–9pm) · Seasonal trends card (BBMP 2020–2025 public data)
+
+**Hotspot alerts strip:** Districts with escalation rate > 30% shown as red chips.
+
+**Ticket log section:** Recent tickets with status, district, intent, created-at — filterable by status and district.
+
+---
+
+### Scripted Demo Scenarios with TTS Pre-Cache
+
+Five realistic conversation flows are scripted with keyword matching. When a demo transcript matches, the backend skips NLU/sentiment inference entirely and serves pre-synthesized audio from a disk cache (`ss_tts_cache.json`) — zero-latency, deterministic demos regardless of API availability.
+
+**Scripted flows:** BESCOM billing dispute · Ration card correction · Water supply crisis · Workplace harassment / women's safety (auto-escalates) · BBMP road repair
+
+Cache is loaded on startup and can be regenerated via `/tts-cache/regenerate`.
+
+**Pre-seeded demo queue:** Six sessions are seeded in the agent queue at backend startup so demo day requires no live calls:
+1. Mangaluru — water supply crisis (distress, Tulu Coast dialect)
+2. Bengaluru — workplace harassment / women's safety (fear, urban code-mix)
+3. Kalaburagi — pension stopped, senior citizen (repeated clarification, Hindi)
+4. Mysuru — ration card address transfer (low ASR confidence)
+5. Belagavi — garbage not collected (medium urgency, North Karnataka)
+6. PII redaction demo (shows Aadhaar → `AADHAAR_1` masking in action)
+
+---
+
+### Fast-Path Pipeline
+
+Conversational responses go out immediately — full NLU runs in the background while the citizen is already listening.
+
+```
+Audio → ASR → fast-path check (keyword match)
+                 │ hit: serve cached turn + TTS, done
+                 │
+                 ▼
+         Gemini conversational reply (~200ms) → TTS → sent to citizen
+                 │
+                 ▼
+         Verification prompt → TTS → sent
+                 │
+                 ▼ (background, non-blocking)
+         Full NLU + dialect context + PII redaction
+         Sentiment fusion (text + prosodic)
+         Confidence score + escalation evaluation
+         nlu_update → citizen WebSocket
+         broadcast_to_agents → all agent dashboards
+```
+
+End-to-end target: **< 1.5 s** before citizen hears the first word.
+
+---
+
+### Ticket Management
+
+After a call is confirmed or escalated, a ticket is automatically created with: ticket ID, intent label, responsible department, status, and session ID. Citizens see the ticket card at the end of their call.
+
+Agents can update ticket status from the dashboard. The ticket log in the Analytics Dashboard reflects live status.
+
+**Endpoints:** `GET /tickets` · `GET /tickets/{id}` · `POST /sessions/{id}/create-ticket` · `PATCH /tickets/{id}/status`
+
+---
+
 ### Dialect-Aware Understanding
 
 The system maps each of Karnataka's districts to a dialect profile, injecting vocabulary hints, formality register, and code-mixing patterns into the Gemini prompt before any NLU call is made.
@@ -135,15 +205,29 @@ Controlled by `PII_REDACTION_ENABLED` in `.env`. Disabled automatically in mock 
 
 ### Agent Dashboard
 
-When a call escalates, the agent receives a structured handoff packet:
+When a call escalates, the agent receives a structured handoff packet and a live session view:
 
-- Full conversation transcript
-- Sentiment timeline (rolling chart)
-- Confidence history per turn
-- Structured intent + dialect tag
-- Audit log summary
+- Full conversation transcript with multi-language toggle (KN / HI / EN)
+- Rolling sentiment timeline chart
+- Composite confidence score history per turn
+- Structured intent + responsible department + dialect tag
+- One-line AI-generated escalation summary
 
-Agents can correct misclassified intents directly from the dashboard. Corrections propagate to the feedback loop and are marked in the audit trail with actor and timestamp.
+**Agent reply:** Agents type a response directly in the dashboard → POST to `/sessions/{id}/agent-reply` → Sarvam TTS synthesizes it → citizen hears it with a typewriter animation on their screen.
+
+**Session resolution:** Mark Reviewed → Resolve (removes from queue, creates/updates ticket, logs to audit trail) or Resolved by Human (increments the analytics `resolved_by_human` metric).
+
+Agents can also correct misclassified intents from the dashboard. Corrections propagate to the feedback loop and are marked in the audit trail with actor and timestamp.
+
+**Real-time updates** via `/ws/agent/{agent_id}` — agents receive `new_escalation`, `queue_update`, and `session_live_update` events without a page reload.
+
+**Toast notifications** slide in from the top-right for new escalations; tapping a toast auto-selects that session.
+
+---
+
+### End Call & Feedback Flow
+
+Citizens can end a call at any time. The flow: hold message → ticket creation → feedback overlay. The feedback overlay presents a 5-star rating; submission triggers a farewell TTS message in the caller's language. Ratings are logged to the audit trail.
 
 ### Feedback Loop + Audit Trail
 
@@ -157,13 +241,15 @@ Every state transition — session creation, verification confirmation, escalati
 
 | Layer | Technology | Why |
 |---|---|---|
-| Frontend | Flutter Web | Single codebase for citizen view + agent dashboard; mobile-ready |
+| Frontend | Flutter Web | Single codebase for citizen view + agent dashboard + analytics; mobile-ready |
 | Backend | FastAPI | Async-native, WebSocket-first, fast iteration |
-| ASR / TTS | Sarvam AI | Best-in-class Kannada/Hindi/English with dialect coverage |
-| NLU | Google Gemini | Strong multilingual reasoning; cheap; constrained-output via taxonomy |
+| ASR / TTS | Sarvam AI (`bulbul:v2`) | Best-in-class Kannada/Hindi/English with dialect coverage |
+| NLU | Google Gemini (`gemini-2.0-flash`) | Strong multilingual reasoning; cheap; constrained-output via taxonomy |
 | Prosody | librosa | Lightweight pitch/energy/rate extraction; no GPU required |
 | Session state | Redis | Sub-ms reads; ephemeral and sticky-session friendly |
 | Audit + feedback | PostgreSQL | Durable, SQL-queryable for compliance and retraining |
+| Maps | flutter_map + OpenStreetMap | District-level distress heatmap on analytics dashboard |
+| Charts | fl_chart | Intent distribution, sentiment timeline, hourly trends |
 
 ---
 
@@ -194,7 +280,7 @@ flutter pub get
 flutter run -d chrome --web-port 8081
 ```
 
-Citizen view at `http://localhost:8081/`, agent dashboard at `http://localhost:8081/agent`.
+Citizen view at `http://localhost:8081/`, agent dashboard at `http://localhost:8081/agent`, analytics at `http://localhost:8081/analytics`.
 
 ### Mock Mode
 
@@ -225,14 +311,28 @@ Set `ENVIRONMENT=mock` in `backend/.env` to run without API keys. All AI service
 GET  /health                              backend + Redis + Postgres status
 GET  /health/latency                      rolling p50/p95 per pipeline stage
 POST /sessions?district=...&language=...  create session (idempotent via Idempotency-Key)
-WS   /ws/{session_id}                     voice pipeline
+GET  /sessions/{id}                       fetch session state
+WS   /ws/{session_id}                     citizen voice pipeline
 
-GET  /agent/queue                         escalations by priority
+GET  /agent/queue                         escalations sorted by priority
 GET  /sessions/{id}/escalation-packet     full handoff context
-POST /sessions/{id}/agent-correction      write agent edit → feedback loop
+POST /sessions/{id}/agent-correction      write agent intent edit → feedback loop
+POST /sessions/{id}/agent-reply           agent text → TTS → citizen
+POST /sessions/{id}/resolve               mark session resolved
+GET  /sessions/{id}/full-context          transcript + sentiment + confidence + audit summary
+WS   /ws/agent/{agent_id}                 real-time agent queue feed
 GET  /audit/{session_id}                  full audit trail
 
-GET  /training-data/export?format=jsonl   export verified interactions
+GET  /analytics/overview                  aggregated stats, district breakdown, intent distribution
+GET  /tickets                             list tickets (filter by status, district)
+GET  /tickets/{id}                        single ticket detail
+POST /sessions/{id}/create-ticket         create ticket after confirmation or escalation
+PATCH /tickets/{id}/status               update ticket status
+
+GET  /tts-cache/load                      load pre-cached TTS audio for demo scenarios
+POST /tts-cache/regenerate               force-regenerate TTS cache
+
+GET  /training-data/export?format=jsonl   export verified interactions for retraining
 GET  /docs                                Swagger UI
 ```
 
@@ -291,8 +391,9 @@ samvaad-setu/
 ├── app_frontend/
 │   ├── lib/
 │   │   ├── screens/
-│   │   │   ├── citizen_view.dart        Voice call interface
-│   │   │   └── agent_dashboard.dart     Live queue + corrections
+│   │   │   ├── citizen_view.dart        Voice call interface + feedback overlay
+│   │   │   ├── agent_dashboard.dart     Live queue + agent reply + corrections
+│   │   │   └── analytics_dashboard.dart Regional overview + district map + charts
 │   │   ├── widgets/
 │   │   │   ├── confidence_gauge.dart    Real-time confidence visualization
 │   │   │   └── sentiment_timeline.dart  Rolling sentiment chart
@@ -302,6 +403,7 @@ samvaad-setu/
 │
 ├── docker-compose.yml
 ├── CLAUDE.md                            Architecture + implementation reference
+├── PRESENTATION.md                      Full feature walkthrough for reviewers
 └── DEMO.md                              Demo walkthrough
 ```
 
