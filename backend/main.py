@@ -369,7 +369,7 @@ app.add_middleware(LatencyMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -674,6 +674,7 @@ async def resolve_session(session_id: str, body: dict = {}):
     if not session:
         raise HTTPException(404, "Session not found")
 
+    global _resolved_by_human_count
     session.is_resolved = True
     await session_manager.save_session(session)
     await remove_from_queue(session_id)
@@ -682,6 +683,7 @@ async def resolve_session(session_id: str, body: dict = {}):
         session_id, "session_resolved", actor="agent",
         payload={"agent_id": agent_id},
     )
+    _resolved_by_human_count += 1
     return {"ok": True, "session_id": session_id}
 
 
@@ -724,6 +726,8 @@ async def export_training_data(format: str = "jsonl", since: Optional[str] = Non
 
 
 # ─── ANALYTICS ───────────────────────────────────────────────────────────────
+
+_resolved_by_human_count: int = 0
 
 _ANALYTICS_DISTRICT_DATA = [
     {"district": "bengaluru_urban",  "label": "Bengaluru Urban",  "lat": 12.97, "lng": 77.59, "calls": 14, "escalated": 5, "avg_sentiment": 0.62, "primary_intent": "police_complaint"},
@@ -774,6 +778,7 @@ async def analytics_overview():
             "total_calls": total_calls,
             "escalated_calls": total_escalated,
             "resolved_calls": max(0, total_escalated - 4),
+            "resolved_by_human": _resolved_by_human_count,
             "avg_confidence": 0.71,
             "avg_sentiment_intensity": round(weighted_sentiment, 2),
         },
