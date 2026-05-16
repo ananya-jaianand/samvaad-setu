@@ -100,18 +100,26 @@ async def generate_conversation_turn(
     if not settings.gemini_api_key or settings.environment == "mock" or _client is None:
         return _mock_conversation_turn(redacted, token_map, language, stage)
 
-    # Last 3 exchanges for context (keep prompt short = faster output)
+    # Full conversation history so follow-ups build on everything said so far
     history_lines = []
-    for t in session.turns[-6:]:
+    for t in session.turns:
         if t.speaker == "citizen":
             history_lines.append(f"Citizen: {t.raw_transcript}")
         elif t.speaker == "ai":
             history_lines.append(f"Assistant: {t.raw_transcript}")
     history = "\n".join(history_lines) or "—"
 
+    # Collect what we know so far to avoid asking the same follow-up twice
+    known_facts: list[str] = []
+    if session.final_intent and session.final_intent != "other_grievance":
+        known_facts.append(f"Issue type: {session.final_intent.replace('_', ' ')}")
+    if session.district:
+        known_facts.append(f"District: {session.district.replace('_', ' ')}")
+    known_str = "; ".join(known_facts) if known_facts else "nothing confirmed yet"
+
     if stage == "seeking_confirmation":
         stage_directive = (
-            f"Briefly summarise the citizen's issue and ask: "
+            f"Briefly summarise the citizen's issue in one sentence, then ask: "
             f"'Shall I go ahead and register this complaint?' — in {language}."
         )
     elif stage == "confirmed_ready":
@@ -121,18 +129,21 @@ async def generate_conversation_turn(
         )
     else:
         stage_directive = (
-            f"Acknowledge briefly, then ask ONE focused follow-up question "
-            f"(specific ward/area, or urgency, or how long the issue has existed) — in {language}."
+            f"Acknowledge what you just heard briefly. "
+            f"Known so far: {known_str}. "
+            f"Ask ONE focused follow-up question to fill a gap "
+            f"(e.g. specific ward/area if not known, how long the issue has existed, "
+            f"or urgency). Do NOT repeat what is already known. — in {language}."
         )
 
     prompt = (
         f"You are Samvaad-Setu, a warm voice assistant for Karnataka 1092 helpline.\n"
         f"Caller is from {district.replace('_', ' ').title()}, speaking {language}.\n\n"
-        f"Conversation so far:\n{history}\n\n"
+        f"Full conversation so far:\n{history}\n\n"
         f"Citizen just said: \"{redacted}\"\n\n"
         f"{stage_directive}\n\n"
         f"RULES: respond in {language} ONLY · max 2 sentences · no PII (names/phone/aadhaar) "
-        f"· area/ward names are fine · warm, natural tone\n\n"
+        f"· area/ward names are fine · warm, natural tone · never repeat a question already asked\n\n"
         f"Reply with ONLY the response text:"
     )
 
