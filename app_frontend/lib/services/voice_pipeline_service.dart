@@ -501,13 +501,8 @@ class VoicePipelineService {
         } else {
           await _audioPlayer.play(BytesSource(bytes));
         }
-        await Future.any([
-          _audioPlayer.onPlayerComplete.first,
-          _audioPlayer.onPlayerStateChanged
-              .where((s) => s == PlayerState.completed || s == PlayerState.stopped)
-              .first,
-          Future.delayed(const Duration(seconds: 10)),
-        ]);
+        await _audioPlayer.onPlayerComplete.first
+            .timeout(const Duration(seconds: 30), onTimeout: () {});
       }
     } catch (_) {}
     if (_currentState == PipelineState.speaking) _setState(PipelineState.ready);
