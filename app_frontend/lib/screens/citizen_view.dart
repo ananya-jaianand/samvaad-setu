@@ -86,6 +86,7 @@ class _CitizenViewState extends State<CitizenView>
   }
 
   void _newCall() {
+    setState(() => _feedbackDismissed = false);
     _svc.startSession(language: _lang, district: AppConfig.defaultDistrict);
   }
 
@@ -95,6 +96,8 @@ class _CitizenViewState extends State<CitizenView>
                 orElse: () => _langs.last)
             .family;
   }
+
+  bool _feedbackDismissed = false;
 
   String _stateKey(PipelineState s) {
     switch (s) {
@@ -407,11 +410,15 @@ class _CitizenViewState extends State<CitizenView>
                     StreamBuilder<Map<String, dynamic>?>(
                       stream: _svc.feedbackStream,
                       builder: (ctx, fbSnap) {
-                        if (fbSnap.data == null) return const SizedBox.shrink();
+                        if (fbSnap.data == null || _feedbackDismissed) return const SizedBox.shrink();
                         return _FeedbackOverlay(
                           lang: _lang,
                           fontFamily: _fontFamily,
-                          onRate: (rating) => _svc.submitFeedbackAndEnd(rating),
+                          onRate: (rating) {
+                            setState(() => _feedbackDismissed = true);
+                            _svc.submitFeedbackAndEnd(rating);
+                          },
+                          onSkip: () => setState(() => _feedbackDismissed = true),
                         );
                       },
                     ),
@@ -1562,9 +1569,10 @@ class _FeedbackOverlay extends StatefulWidget {
   final String lang;
   final String fontFamily;
   final void Function(int rating) onRate;
+  final VoidCallback onSkip;
 
   const _FeedbackOverlay(
-      {required this.lang, required this.fontFamily, required this.onRate});
+      {required this.lang, required this.fontFamily, required this.onRate, required this.onSkip});
 
   @override
   State<_FeedbackOverlay> createState() => _FeedbackOverlayState();
@@ -1596,10 +1604,14 @@ class _FeedbackOverlayState extends State<_FeedbackOverlay> {
   Widget build(BuildContext context) {
     final lbl = _labels[widget.lang] ?? _labels['en']!;
     return Positioned.fill(
-      child: Container(
+      child: GestureDetector(
+        onTap: _submitted ? null : widget.onSkip,
+        child: Container(
         color: Colors.black.withValues(alpha: 0.55),
         child: Center(
-          child: Container(
+          child: GestureDetector(
+            onTap: () {},
+            child: Container(
             margin: const EdgeInsets.symmetric(horizontal: 32),
             padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
             decoration: BoxDecoration(
@@ -1637,6 +1649,22 @@ class _FeedbackOverlayState extends State<_FeedbackOverlay> {
                 : Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      Align(
+                        alignment: Alignment.topRight,
+                        child: GestureDetector(
+                          onTap: widget.onSkip,
+                          child: Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: const BoxDecoration(
+                              color: AppTheme.hair,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.close_rounded,
+                                size: 16, color: AppTheme.muted),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
                       Text(
                         lbl.title,
                         textAlign: TextAlign.center,
@@ -1677,9 +1705,11 @@ class _FeedbackOverlayState extends State<_FeedbackOverlay> {
                       ),
                     ],
                   ),
-          ),
-        ),
-      ),
+          ),   // card Container
+          ),   // inner GestureDetector (stop backdrop tap propagating)
+        ),     // Center
+        ),     // backdrop Container
+      ),       // backdrop GestureDetector
     );
   }
 }
