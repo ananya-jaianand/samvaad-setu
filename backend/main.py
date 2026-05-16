@@ -794,7 +794,6 @@ async def _handle_audio_turn(websocket: WebSocket, session: SessionState, msg: d
     session.add_turn(ai_turn)
 
     # ── 5. Send audio to citizen immediately ───────────────────────────────
-    session.verification_state = "pending"
     await websocket.send_json({
         "type": "turn_update",
         "citizen_turn": citizen_turn.model_dump(mode="json"),
@@ -814,8 +813,8 @@ async def _handle_audio_turn(websocket: WebSocket, session: SessionState, msg: d
     })
     print(f"[WS] turn_update sent ← audio on its way to citizen")
 
-    # Show verification panel only after 3 citizen turns.
-    if len(session.citizen_turns()) >= 3:
+    # Show verification panel only after 3 citizen turns and only once (pending = not yet asked).
+    if len(session.citizen_turns()) >= 3 and session.verification_state == "pending":
         verify_panel_text = _verification_engine.generate_verification_prompt(
             intent=session.final_intent or "other_grievance",
             entities={},
@@ -1056,12 +1055,14 @@ async def _handle_verification_response(websocket: WebSocket, session: SessionSt
 
     print(f"[VERIFICATION] Response: state={state}, correction_text={correction_text}")
 
-    # Yes / Partly / No all do the same thing: dismiss the panel and keep going.
     if state == "correct":
         # Confirmed — create ticket now, same as end_call flow.
+        session.verification_state = "confirmed"
         await _handle_end_call(websocket, session)
     else:
-        # Partly / No — just dismiss the panel, keep talking.
+        # Partly / No — dismiss the panel and keep gathering. Mark state so
+        # the verification panel doesn't re-appear on subsequent turns.
+        session.verification_state = "partial" if state == "partial" else "rejected"
         await websocket.send_json({
             "type": "verification_result",
             "state": "confirmed",

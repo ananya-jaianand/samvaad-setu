@@ -273,7 +273,20 @@ class _CitizenViewState extends State<CitizenView>
                                   ),
                                 ),
 
-                                const SizedBox(height: 20),
+                                // "Your turn" chip — only when AI just finished and no verify card
+                                if (state == PipelineState.ready &&
+                                    lastAiTurn != null &&
+                                    !showVerify &&
+                                    !isEscalated)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 14),
+                                    child: _YourTurnChip(
+                                      lang: _lang,
+                                      breathe: _breathe,
+                                    ),
+                                  )
+                                else
+                                  const SizedBox(height: 20),
 
                                 // Verification panel
                                 if (showVerify && !isEscalated)
@@ -1710,6 +1723,53 @@ class _FeedbackOverlayState extends State<_FeedbackOverlay> {
         ),     // Center
         ),     // backdrop Container
       ),       // backdrop GestureDetector
+    );
+  }
+}
+
+// ─── Your-turn chip ──────────────────────────────────────────────────────────
+
+class _YourTurnChip extends StatelessWidget {
+  final String lang;
+  final AnimationController breathe;
+  const _YourTurnChip({required this.lang, required this.breathe});
+
+  static const _labels = {
+    'kn': 'ಈಗ ನಿಮ್ಮ ಸರದಿ — ಮೈಕ್ ಟ್ಯಾಪ್ ಮಾಡಿ',
+    'hi': 'अब आपकी बारी — माइक टैप करें',
+    'en': 'Your turn — tap the mic',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: breathe,
+      builder: (_, __) {
+        final pulse = 0.6 + 0.4 * breathe.value;
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 7,
+              height: 7,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: AppTheme.saffron.withValues(alpha: pulse),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              _labels[lang] ?? _labels['en']!,
+              style: TextStyle(
+                fontSize: 12.5,
+                color: AppTheme.saffron2.withValues(alpha: 0.75 + 0.25 * breathe.value),
+                fontWeight: FontWeight.w500,
+                letterSpacing: 0.04,
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
