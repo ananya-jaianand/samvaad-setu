@@ -1295,8 +1295,25 @@ class _CallTranscript extends StatelessWidget {
             itemBuilder: (_, i) {
               final t = turns[i];
               final isCit = t.speaker == 'citizen';
+              final isAgent = t.speaker == 'agent';
               final text = t.displayText;
               if (text.isEmpty) return const SizedBox.shrink();
+              final Color avatarBg = isCit
+                  ? const Color(0xFFFFF1DD)
+                  : isAgent
+                      ? const Color(0xFFFFF3E0)
+                      : AppTheme.tealSoft;
+              final Color avatarBorderColor = isCit
+                  ? const Color(0xFFF1DDA7)
+                  : isAgent
+                      ? const Color(0xFFE8C97A)
+                      : const Color(0xFFC9DCD5);
+              final Color avatarTextColor = isCit
+                  ? AppTheme.saffron2
+                  : isAgent
+                      ? AppTheme.saffron
+                      : AppTheme.teal2;
+              final String avatarLabel = isCit ? 'C' : isAgent ? 'A' : 'AI';
               return Padding(
                 padding: const EdgeInsets.only(bottom: 16),
                 child: Row(
@@ -1307,24 +1324,16 @@ class _CallTranscript extends StatelessWidget {
                       height: 28,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: isCit
-                            ? const Color(0xFFFFF1DD)
-                            : AppTheme.tealSoft,
-                        border: Border.all(
-                          color: isCit
-                              ? const Color(0xFFF1DDA7)
-                              : const Color(0xFFC9DCD5),
-                        ),
+                        color: avatarBg,
+                        border: Border.all(color: avatarBorderColor),
                       ),
                       child: Center(
                         child: Text(
-                          isCit ? 'C' : 'AI',
+                          avatarLabel,
                           style: TextStyle(
                             fontSize: 9,
                             fontWeight: FontWeight.w700,
-                            color: isCit
-                                ? AppTheme.saffron2
-                                : AppTheme.teal2,
+                            color: avatarTextColor,
                           ),
                         ),
                       ),
@@ -1337,7 +1346,7 @@ class _CallTranscript extends StatelessWidget {
                           fontSize: 15,
                           height: 1.55,
                           color: AppTheme.ink,
-                          fontFamily: isCit ? fontFamily : 'Inter',
+                          fontFamily: (isCit || isAgent) ? fontFamily : 'Inter',
                         ),
                       ),
                     ),
