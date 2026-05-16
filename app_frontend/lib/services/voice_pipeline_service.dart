@@ -63,6 +63,11 @@ class VoicePipelineService {
   bool? _isMockMode;
   TicketInfo? _currentTicket;
 
+  // Serialised audio queue — ensures clips play back-to-back, never overlapping.
+  // Each WS message is chained on this future so _playAudio calls are sequential.
+  // ignore: prefer_final_fields
+  Future<void> _audioChain = Future.value();
+
   String get currentLanguage => _currentLanguage;
   String get currentDistrict => _currentDistrict;
   bool? get isMockMode => _isMockMode;
@@ -93,6 +98,7 @@ class VoicePipelineService {
     _verifyPromptCtrl.add(null);
     _currentTicket = null;
     _ticketCtrl.add(null);
+    _audioChain = Future.value(); // clear any pending audio from previous session
 
     try {
       final response = await http
@@ -119,11 +125,15 @@ class VoicePipelineService {
     _channel = WebSocketChannel.connect(Uri.parse('$wsUrl/$sessionId'));
     _channel!.stream.listen(
       (message) {
-        try {
-          _handleMessage(jsonDecode(message as String));
-        } catch (e) {
-          print('[WS] decode error: $e');
-        }
+        // Chain each message onto the previous one so audio never overlaps.
+        _audioChain = _audioChain.then((_) async {
+          try {
+            await _handleMessage(
+                jsonDecode(message as String) as Map<String, dynamic>);
+          } catch (e) {
+            print('[WS] decode error: $e');
+          }
+        });
       },
       onError: (e) {
         _errorCtrl.add('WebSocket error: $e');
@@ -157,8 +167,12 @@ class VoicePipelineService {
         break;
 
       case 'verification_prompt':
-        // Backend sends this after processing audio, asking citizen to confirm
+        // Show panel immediately, then speak the verification question
         _verifyPromptCtrl.add(VerificationPrompt.fromJson(data));
+        final vpAudio = data['tts_audio_b64'] as String? ?? '';
+        if (vpAudio.isNotEmpty) {
+          await _playAudio(vpAudio);
+        }
         _setState(PipelineState.verifying);
         break;
 
