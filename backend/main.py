@@ -1407,105 +1407,16 @@ async def _handle_verification_response(websocket: WebSocket, session: SessionSt
 
     print(f"[VERIFICATION] Response: state={state}, correction_text={correction_text}")
 
-    result = _verification_engine.process_verification_response(session, state, correction_text)
-    action = result["action"]
+    # Yes / Partly / No all do the same thing: dismiss the panel and keep going.
+    # Registration only happens on end_call — never mid-conversation.
+    await websocket.send_json({
+        "type": "verification_result",
+        "state": "confirmed",
+        "ai_response": "",
+        "tts_audio_b64": "",
+        "session_id": session.session_id,
+    })
 
-    if action == "confirmed":
-        if session.conversation_stage == "gathering_info":
-            session.conversation_stage = "seeking_confirmation"
-            confirm_asks = {
-                "kn": f"ಸರಿ, ತಿಳಿಯಿತು! ನಿಮ್ಮ {(session.final_intent or 'ದೂರು').replace('_', ' ')} ಬಗ್ಗೆ ದೂರು ದಾಖಲಿಸಲೇ?",
-                "hi": f"ठीक है! आपकी {(session.final_intent or 'शिकायत').replace('_', ' ')} दर्ज करूं?",
-                "en": f"Got it! Shall I go ahead and register your {(session.final_intent or 'complaint').replace('_', ' ')}?",
-            }
-            ack_text = confirm_asks.get(language, confirm_asks["en"])
-            tts_audio = ""
-            try:
-                tts_audio = await tts.synthesize(ack_text, language=language)
-            except Exception:
-                pass
-            ai_turn = Turn(speaker="ai", raw_transcript=ack_text, tts_audio_b64=tts_audio)
-            session.add_turn(ai_turn)
-            await websocket.send_json({
-                "type": "verification_result",
-                "state": "gathering_confirmed",
-                "ai_response": ack_text,
-                "tts_audio_b64": tts_audio,
-                "session_id": session.session_id,
-                "conversation_stage": "seeking_confirmation",
-            })
-            confirm_prompt = _verification_engine.generate_verification_prompt(
-                intent=session.final_intent or "other_grievance",
-                entities={},
-                language=language,
-                district=session.district,
-            )
-            await websocket.send_json({
-                "type": "verification_prompt",
-                "text": confirm_prompt,
-                "language": language,
-                "district": session.district,
-                "session_id": session.session_id,
-                "conversation_stage": "seeking_confirmation",
-            })
-            return
-
-        # seeking_confirmation or confirmed_ready confirmed — ready to create ticket on end_call
-        session.conversation_stage = "confirmed_ready"
-        ack_text = verification.get_acknowledgment(language, session.final_intent or "other_grievance")
-        tts_audio = ""
-        try:
-            tts_audio = await tts.synthesize(ack_text, language=language)
-        except Exception:
-            pass
-        ai_turn = Turn(speaker="ai", raw_transcript=ack_text, tts_audio_b64=tts_audio)
-        session.add_turn(ai_turn)
-        await websocket.send_json({
-            "type": "verification_result",
-            "state": "confirmed",
-            "ai_response": ack_text,
-            "tts_audio_b64": tts_audio,
-            "session_id": session.session_id,
-            "conversation_stage": "confirmed_ready",
-        })
-        print(f"[VERIFICATION] Confirmed — waiting for end_call to create ticket. Intent: {session.final_intent}")
-        await log_event(
-            session.session_id, "verification_confirmed", actor="citizen",
-            payload={"intent": session.final_intent, "clarification_count": session.clarification_count},
-        )
-
-    elif action == "clarify":
-        clarify_text = result["clarification_prompt"]
-        tts_audio = ""
-        try:
-            tts_audio = await tts.synthesize(clarify_text, language=language)
-        except Exception:
-            pass
-        ai_turn = Turn(speaker="ai", raw_transcript=clarify_text, tts_audio_b64=tts_audio)
-        session.add_turn(ai_turn)
-        await websocket.send_json({
-            "type": "verification_result",
-            "state": "partial",
-            "ai_response": clarify_text,
-            "tts_audio_b64": tts_audio,
-            "clarification_count": session.clarification_count,
-        })
-        print(f"[VERIFICATION] Clarification #{session.clarification_count} sent")
-        await log_event(
-            session.session_id, "verification_partial", actor="citizen",
-            payload={"clarification_count": session.clarification_count},
-        )
-
-    elif action == "escalate":
-        from services.escalation import EscalationDecision
-        fake_esc = EscalationDecision(
-            should_escalate=True,
-            reason="repeated_clarification",
-            composite_score=0.8,
-            explanation=f"Verification failed after {session.clarification_count} attempts.",
-        )
-        await _do_escalation(websocket, session, fake_esc, language)
-        print(f"[VERIFICATION] Escalated after repeated clarification failures")
 
 
 async def _handle_agent_correction(websocket: WebSocket, session: SessionState, msg: dict):
