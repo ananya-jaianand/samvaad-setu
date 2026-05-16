@@ -14,6 +14,7 @@ import '../config/app_config.dart';
 class _OverviewData {
   final int totalCalls;
   final int escalatedCalls;
+  final int resolvedByHuman;
   final double avgConfidence;
   final double avgSentimentIntensity;
   final List<_DistrictStat> byDistrict;
@@ -25,6 +26,7 @@ class _OverviewData {
   const _OverviewData({
     required this.totalCalls,
     required this.escalatedCalls,
+    required this.resolvedByHuman,
     required this.avgConfidence,
     required this.avgSentimentIntensity,
     required this.byDistrict,
@@ -39,6 +41,7 @@ class _OverviewData {
     return _OverviewData(
       totalCalls: (s['total_calls'] as num).toInt(),
       escalatedCalls: (s['escalated_calls'] as num).toInt(),
+      resolvedByHuman: (s['resolved_by_human'] as num? ?? 0).toInt(),
       avgConfidence: (s['avg_confidence'] as num).toDouble(),
       avgSentimentIntensity: (s['avg_sentiment_intensity'] as num).toDouble(),
       byDistrict: (json['by_district'] as List)
@@ -173,41 +176,56 @@ class AnalyticsDashboard extends StatefulWidget {
 class _AnalyticsDashboardState extends State<AnalyticsDashboard> {
   _OverviewData? _data;
   bool _loading = true;
+  bool _warmingUp = false;
   String? _error;
   DateTime? _lastUpdated;
   Timer? _refreshTimer;
+  Timer? _warmupTimer;
 
   @override
   void initState() {
     super.initState();
     _fetchData();
-    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) { _fetchData(); });
+    _refreshTimer = Timer.periodic(const Duration(seconds: 10), (_) { _fetchData(); });
   }
 
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _warmupTimer?.cancel();
     super.dispose();
   }
 
   Future<void> _fetchData() async {
-    setState(() { _loading = _data == null; });
+    if (mounted) setState(() { _loading = _data == null; _error = null; });
+
+    // After 5s show a "warming up" message so the user knows what's happening.
+    _warmupTimer?.cancel();
+    if (_data == null) {
+      _warmupTimer = Timer(const Duration(seconds: 5), () {
+        if (mounted && _loading) setState(() => _warmingUp = true);
+      });
+    }
+
     try {
       final res = await http
           .get(Uri.parse('${AppConfig.backendUrl}/analytics/overview'))
-          .timeout(const Duration(seconds: 8));
+          .timeout(const Duration(seconds: 40));
+      _warmupTimer?.cancel();
       if (res.statusCode == 200 && mounted) {
         setState(() {
           _data = _OverviewData.fromJson(
               jsonDecode(res.body) as Map<String, dynamic>);
           _loading = false;
+          _warmingUp = false;
           _lastUpdated = DateTime.now();
         });
       } else {
-        if (mounted) setState(() { _error = 'Server returned ${res.statusCode}'; _loading = false; });
+        if (mounted) setState(() { _error = 'Server returned ${res.statusCode}'; _loading = false; _warmingUp = false; });
       }
     } catch (e) {
-      if (mounted) setState(() { _error = e.toString(); _loading = false; });
+      _warmupTimer?.cancel();
+      if (mounted) setState(() { _error = e.toString(); _loading = false; _warmingUp = false; });
     }
   }
 
@@ -216,7 +234,23 @@ class _AnalyticsDashboardState extends State<AnalyticsDashboard> {
     return Container(
       color: AppTheme.agentBg,
       child: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const CircularProgressIndicator(
+                      color: AppTheme.teal, strokeWidth: 2),
+                  if (_warmingUp) ...[
+                    const SizedBox(height: 16),
+                    const Text('Warming up backend…',
+                        style: TextStyle(fontSize: 13, color: AppTheme.muted)),
+                    const SizedBox(height: 4),
+                    const Text('Render spins down after inactivity — this takes ~20s',
+                        style: TextStyle(fontSize: 11, color: AppTheme.muted)),
+                  ],
+                ],
+              ),
+            )
           : _error != null
               ? _ErrorView(error: _error!, onRetry: _fetchData)
               : _AnalyticsContent(data: _data!, lastUpdated: _lastUpdated),
@@ -305,6 +339,7 @@ class _AnalyticsContent extends StatelessWidget {
         data.totalCalls > 0 ? (data.escalatedCalls / data.totalCalls * 100).round() : 0;
     final resolutionPct =
         data.totalCalls > 0 ? ((data.totalCalls - data.escalatedCalls) / data.totalCalls * 100).round() : 0;
+    final resolvedByHuman = data.resolvedByHuman;
 
     final updatedStr = lastUpdated != null
         ? 'Updated ${lastUpdated!.hour.toString().padLeft(2, '0')}:${lastUpdated!.minute.toString().padLeft(2, '0')}'
@@ -365,7 +400,9 @@ class _AnalyticsContent extends StatelessWidget {
               _StatCard(
                 label: 'Resolved',
                 value: '$resolutionPct%',
-                sub: 'without escalation',
+                sub: resolvedByHuman > 0
+                    ? '$resolvedByHuman by human agent'
+                    : 'without escalation',
                 icon: Icons.check_circle_outline_rounded,
                 iconColor: AppTheme.sage,
               ),

@@ -322,6 +322,11 @@ class VoicePipelineService {
   Future<void> startRecording() async {
     if (_currentState != PipelineState.ready) return;
     try {
+      // Unlock the AudioContext on web so subsequent _playAudio calls aren't
+      // blocked by Chrome's autoplay policy (requires a user-gesture frame).
+      if (kIsWeb) {
+        try { await _audioPlayer.resume(); } catch (_) {}
+      }
       if (await _record.hasPermission()) {
         await _record.start(
           const RecordConfig(encoder: AudioEncoder.wav),
@@ -434,7 +439,15 @@ class VoicePipelineService {
   /// The WS stays open until [submitFeedbackAndEnd] is called.
   void endCall() {
     if (_channel == null) return;
+    // Stop any playing audio and unblock the audio chain immediately so the
+    // backend's hold_on / ticket_created responses aren't queued behind it.
+    _audioPlayer.stop();
+    _audioChain = Future.value();
     _verifyPromptCtrl.add(null);
+    if (_currentState == PipelineState.speaking ||
+        _currentState == PipelineState.processing) {
+      _setState(PipelineState.ready);
+    }
     _channel!.sink.add(jsonEncode({'type': 'end_call'}));
   }
 
@@ -482,14 +495,19 @@ class VoicePipelineService {
       final bytes = base64Decode(b64);
       // Skip playback for stub audio (≤ 100 bytes = mock silent WAV)
       if (bytes.length > 100) {
-        // BytesSource is not supported on web — use a data URI instead.
+        // Timeout = actual audio duration + 1.5 s buffer.
+        // WAV PCM 24 kHz 16-bit mono = 48 000 bytes/s.
+        final pcmBytes = bytes.length > 44 ? bytes.length - 44 : bytes.length;
+        final estMs = ((pcmBytes / 48000) * 1000).round() + 1500;
+        final timeout = Duration(milliseconds: estMs.clamp(2000, 12000));
+
         if (kIsWeb) {
           await _audioPlayer.play(UrlSource('data:audio/wav;base64,$b64'));
         } else {
           await _audioPlayer.play(BytesSource(bytes));
         }
         await _audioPlayer.onPlayerComplete.first
-            .timeout(const Duration(seconds: 30), onTimeout: () {});
+            .timeout(timeout, onTimeout: () {});
       }
     } catch (_) {}
     if (_currentState == PipelineState.speaking) _setState(PipelineState.ready);

@@ -5,6 +5,7 @@ WebSocket-driven voice pipeline: ASR → NLU → Sentiment → Verification → 
 import json
 import base64
 import asyncio
+from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional, AsyncIterator
 
@@ -164,6 +165,7 @@ _SS: dict[str, list[dict]] = {
 _ss_state: dict[str, tuple[str, int]] = {}
 # scenario_key_turn_index → base64 TTS audio
 _ss_tts: dict[str, str] = {}
+_SS_TTS_CACHE_FILE = Path(__file__).parent / "demo_fixtures" / "ss_tts_cache.json"
 
 
 def _ss_match(session_id: str, transcript: str) -> Optional[tuple[str, int, dict]]:
@@ -305,7 +307,18 @@ async def _ss_serve(
 
 
 async def _warmup_ss_tts() -> None:
-    """Pre-synthesize all scenario AI responses into _ss_tts cache at startup."""
+    """Load scenario TTS from disk cache; only call Sarvam if cache is missing."""
+    # Load from disk — avoids any API call on restart
+    if _SS_TTS_CACHE_FILE.exists():
+        try:
+            data = json.loads(_SS_TTS_CACHE_FILE.read_text())
+            _ss_tts.update(data)
+            print(f"[STARTUP] Scenario TTS loaded from disk: {len(_ss_tts)} clips")
+            return
+        except Exception as e:
+            print(f"[STARTUP] TTS disk cache load failed ({e}), regenerating")
+
+    # First run — synthesize and save to disk for next time
     _lang_of = lambda sk: sk.split("_")[0]
     for sk, turns in _SS.items():
         lang = _lang_of(sk)
@@ -314,10 +327,20 @@ async def _warmup_ss_tts() -> None:
             if key not in _ss_tts:
                 try:
                     audio = await tts.synthesize(turn["rs"], language=lang)
-                    _ss_tts[key] = audio
+                    if audio:
+                        _ss_tts[key] = audio
                 except Exception:
                     pass
-    print(f"[STARTUP] Scenario TTS cache warmed: {len(_ss_tts)} clips")
+
+    filled = sum(1 for v in _ss_tts.values() if v)
+    if filled:
+        try:
+            _SS_TTS_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            _SS_TTS_CACHE_FILE.write_text(json.dumps(_ss_tts))
+            print(f"[STARTUP] Scenario TTS saved to disk: {filled} clips")
+        except Exception as e:
+            print(f"[STARTUP] Could not save TTS cache: {e}")
+    print(f"[STARTUP] Scenario TTS ready: {filled}/25 clips")
 
 
 app = FastAPI(
@@ -369,7 +392,7 @@ app.add_middleware(LatencyMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -674,6 +697,7 @@ async def resolve_session(session_id: str, body: dict = {}):
     if not session:
         raise HTTPException(404, "Session not found")
 
+    global _resolved_by_human_count
     session.is_resolved = True
     await session_manager.save_session(session)
     await remove_from_queue(session_id)
@@ -682,6 +706,7 @@ async def resolve_session(session_id: str, body: dict = {}):
         session_id, "session_resolved", actor="agent",
         payload={"agent_id": agent_id},
     )
+    _resolved_by_human_count += 1
     return {"ok": True, "session_id": session_id}
 
 
@@ -724,6 +749,8 @@ async def export_training_data(format: str = "jsonl", since: Optional[str] = Non
 
 
 # ─── ANALYTICS ───────────────────────────────────────────────────────────────
+
+_resolved_by_human_count: int = 0
 
 _ANALYTICS_DISTRICT_DATA = [
     {"district": "bengaluru_urban",  "label": "Bengaluru Urban",  "lat": 12.97, "lng": 77.59, "calls": 14, "escalated": 5, "avg_sentiment": 0.62, "primary_intent": "police_complaint"},
@@ -774,6 +801,7 @@ async def analytics_overview():
             "total_calls": total_calls,
             "escalated_calls": total_escalated,
             "resolved_calls": max(0, total_escalated - 4),
+            "resolved_by_human": _resolved_by_human_count,
             "avg_confidence": 0.71,
             "avg_sentiment_intensity": round(weighted_sentiment, 2),
         },
@@ -866,6 +894,27 @@ async def demo_clear_agent_queue():
         cleared.append(sid)
 
     return {"cleared": len(cleared), "session_ids": cleared}
+
+
+@app.get("/demo/tts-cache")
+async def demo_download_tts_cache():
+    """Download the scenario TTS cache as JSON — commit as demo_fixtures/ss_tts_cache.json."""
+    if not _ss_tts:
+        raise HTTPException(503, "TTS cache is empty — warmup may still be running")
+    filled = {k: v for k, v in _ss_tts.items() if v}
+    return JSONResponse(content=filled, headers={
+        "Content-Disposition": "attachment; filename=ss_tts_cache.json"
+    })
+
+
+@app.post("/demo/regen-tts-cache")
+async def demo_regen_tts_cache():
+    """Force-regenerate the TTS cache via Sarvam and save to disk."""
+    _ss_tts.clear()
+    if _SS_TTS_CACHE_FILE.exists():
+        _SS_TTS_CACHE_FILE.unlink()
+    asyncio.create_task(_warmup_ss_tts())
+    return {"status": "regenerating", "check": "/demo/tts-cache"}
 
 
 # ─── AGENT WEBSOCKET ──────────────────────────────────────────────────────────
