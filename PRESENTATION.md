@@ -96,8 +96,8 @@ Every confirmed interaction writes to `verified_interactions` (Postgres). Agent 
 ### 3.8 Karnataka-Specific Grievance Taxonomy
 40 intent categories derived from Sevasindhu/Janasevaka public structures, each with Kannada/Hindi/English labels, responsible department, and escalation priority. NLU is constrained to these IDs — no free-form intent strings. If Gemini returns an unknown intent, the session is flagged for human review with `reason="intent_out_of_taxonomy"`.
 
-### 3.9 Scripted Demo Scenarios with Pre-Cached TTS
-5 realistic conversation flows (BESCOM billing, ration card correction, water supply, workplace harassment/auto-escalation, BBMP road) are scripted with keyword matching. When a demo transcript matches, the backend skips NLU/sentiment inference entirely and serves pre-synthesized audio from a disk cache (`ss_tts_cache.json`). This gives zero-latency, deterministic demos regardless of API availability.
+### 3.9 Staged Verification — After 3 Follow-Up Turns
+The verification panel (Yes / Partly / No) only appears after the citizen has exchanged at least 3 turns with the system. This prevents premature confirmation on incomplete information. Once the citizen clicks **Yes**, the system immediately creates a ticket and presents a reference number — no separate "Shall I register?" step. Partly and No dismiss the panel so the conversation continues naturally.
 
 ### 3.10 Latency Budget Enforced
 Total target: **< 1.5s** per turn. The pipeline front-loads the conversational response (fast Gemini call) → synthesizes TTS → sends audio to citizen. Full NLU, sentiment, and escalation evaluation run **in a background async task** while the citizen is already listening. The agent dashboard receives the enriched data shortly after.
@@ -131,7 +131,7 @@ The primary citizen-facing interface. Built for accessibility — large touch ta
 - Agent label ("Agent") shown above agent turns
 - Localized placeholder text when idle
 
-**Verification panel** (appears after every AI turn)
+**Verification panel** (appears after the 3rd citizen turn and onwards)
 - White card with teal box-shadow
 - Header chip: `ಪರಿಶೀಲನೆ / सत्यापन / Verification`
 - AI restatement of citizen's issue (dialect-conditioned, 22px)
@@ -304,25 +304,24 @@ Audio (base64 WAV)
 1. ASR — Sarvam AI transcribe() → transcript + per-token confidence
     │
     ▼
-2. FAST PATH CHECK — keyword match against 5 scripted scenarios
-   → If hit: serve pre-baked turn + cached TTS audio, skip steps 3–7
-    │
-    ▼
-3. Fast conversational response — Gemini nlu.generate_conversation_turn()
+2. Fast conversational response — Gemini nlu.generate_conversation_turn()
    (plain natural reply, ~200ms)
     │
     ▼
-4. TTS synthesis — Sarvam AI synthesize(ai_text)
+3. TTS synthesis — Sarvam AI synthesize(ai_text)
     │
     ▼
-5. Send audio to citizen immediately via WebSocket (turn_update message)
+4. Send audio to citizen immediately via WebSocket (turn_update message)
     │
     ▼
-6. Verification prompt — VerificationEngine.generate_verification_prompt()
+5. Verification prompt — only if citizen has completed 3+ turns
+   → VerificationEngine.generate_verification_prompt()
    → TTS synthesized → sent as verification_prompt message
+   → Yes: create ticket immediately (_handle_end_call flow)
+   → Partly / No: dismiss panel, conversation continues
     │
     ▼
-7. BACKGROUND TASK (async, non-blocking — citizen already listening):
+6. BACKGROUND TASK (async, non-blocking — citizen already listening):
    ├─ Full NLU — Gemini extract_intent_and_rephrase() with dialect context + PII redaction
    ├─ Sentiment — librosa prosodic features + Gemini text sentiment → fused
    ├─ Escalation evaluation — EscalationEngine.evaluate()
@@ -335,20 +334,18 @@ Audio (base64 WAV)
 ### 5.3 Verification State Machine
 
 ```
-                    citizen says "correct"
-         ┌──────────────────────────────────────────────► confirmed
-         │                                                    │
-pending ─┤  citizen says "partial" / "incorrect"              │
-         │        ┌──────────────────────────────► clarify    │
-         │        │   clarification_count < 2                 │
-         │        │                                           │
-         │        └──────────────────────────────► escalate   │
-         │             clarification_count ≥ 2                │
-         │                                                    │
-         └──────────────────────────────────────────────────► ticket created
+                         citizen says "correct"
+         ┌────────────────────────────────────────────────► ticket created
+         │                                                  (hold_on → ticket → feedback)
+panel    │
+shows ───┤  citizen says "partial" / "incorrect"
+after    │        └──────────────────────────────► dismiss panel, keep talking
+3 turns  │
+         │  citizen clicks End Call at any point
+         └────────────────────────────────────────────────► ticket created
 ```
 
-Each branch is handled in `_handle_verification_response()` via `VerificationEngine.process_verification_response()`.
+Handled in `_handle_verification_response()`. "Yes" calls `_handle_end_call()` directly. "Partly" / "No" send a `verification_result` to dismiss the panel with no state change.
 
 ### 5.4 Confidence Score Calculation
 
@@ -538,34 +535,30 @@ SessionState:
 
 ---
 
-## 7. Demo Scenarios (5 scripted flows)
+## 7. Demo Flow
 
-### S1 — `kn_bescom` — BESCOM Billing Dispute (Kannada)
-- 5 turns: complaint → service connection number → usage discrepancy (PII demo: phone number redacted) → timeline → thank you
-- Intent: `bescom_billing`
-- Sentiment: neutral → concerned → neutral → calm
-- Confidence: 0.85 → 0.79 → 0.91 → 0.94
-- Demonstrates: PII redaction (`PHONE_1`)
+The demo runs on live ASR + NLU (no scripts). Speak naturally in any of the three languages.
 
-### S2 — `kn_ration` — Ration Card Name Correction (Kannada)
-- 5 turns: correction request → card number → father's name error → registration → office location
-- Intent: `ration_card_correction`
-- Demonstrates: multi-turn information gathering, ticket creation
+**Suggested flow (English, ~2 min):**
+1. Say a grievance opening (e.g. "There's a pothole on my road")
+2. AI responds with a follow-up question — answer it
+3. Continue for 3 turns — the verification panel appears
+4. Click **Yes** → ticket created, reference number shown
+5. Rate experience → call ends
 
-### S3 — `hi_water` — Water Supply Complaint (Hindi)
-- 5 turns: no water → ward + Aadhaar (PII demo) → area-level → timeline → thank you
-- Intent: `water_supply_complaint`
-- Demonstrates: Aadhaar redaction (`AADHAAR_1`), Hindi NLU
+**Suggested flow (Kannada, PII demo):**
+1. Report a BESCOM billing issue
+2. When asked for details, mention your mobile number — watch it appear as `PHONE_1` in the agent dashboard transcript
+3. Continue to ticket creation
 
-### S4 — `hi_safety` — Workplace Harassment / Auto-Escalation (Hindi)
-- 5 turns: vague complaint → manager harassment → confirms unsafe → distress peak → escalation fires
-- Escalation trigger at turn 4: sentiment_label=`distress`, intensity=`0.85` → `high_distress`
-- Demonstrates: automatic escalation from vocal distress, escalation message in Hindi, ticket created, agent queue updated live
+**Suggested flow (Hindi, escalation demo):**
+1. Report workplace harassment
+2. Describe feeling unsafe — sentiment gauge rises on agent dashboard
+3. System auto-escalates at high distress — agent queue updates live
 
-### S5 — `en_road` — BBMP Road Pothole (English)
-- 5 turns: pothole → location → severity (2 people fallen) → timeline → thank you
-- Intent: `road_repair`
-- Demonstrates: English pipeline, priority escalation of severity
+**Agent dashboard (open in a second tab at `/agent`):**
+- Watch confidence gauge and sentiment timeline update in real time as the citizen speaks
+- Use the reply box to send a message back — citizen hears it via TTS
 
 ---
 
@@ -579,7 +572,7 @@ SessionState:
 | Redis disconnect | Session continues in-memory for active connection; new sessions blocked |
 | Postgres disconnect | Audit + feedback writes queued in Redis; replayed on reconnect |
 | WebSocket disconnect | Session preserved in Redis for 5 min; auto-resume on reconnect |
-| Demo TTS cache miss | Falls back to live Sarvam synthesis; result cached for next run |
+| Sarvam TTS rate-limited | Returns empty audio; transcript still displays; call continues |
 
 ---
 
@@ -632,7 +625,7 @@ Latency is logged per-stage via `LatencyMiddleware`. Rolling p50/p95 exposed at 
 
 | File | What to show |
 |------|-------------|
-| `backend/main.py` | Full pipeline, scripted scenarios, all REST + WS endpoints |
+| `backend/main.py` | Full pipeline, verification gate, all REST + WS endpoints |
 | `backend/services/verification_engine.py` | 3-state verification loop |
 | `backend/services/confidence_scorer.py` | 4-component composite score formula |
 | `backend/services/pii_redactor.py` | PII patterns, token map, unredact |

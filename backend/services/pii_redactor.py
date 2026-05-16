@@ -116,6 +116,10 @@ def redact(text: str, language: str = "en") -> tuple[str, dict]:
             return m.group(0)[:offset] + tok
         text = lang_re.sub(_intro_sub, text)
 
+    if token_map:
+        tokens = ", ".join(token_map.keys())
+        print(f"[PII] {len(token_map)} token(s) redacted: {tokens}")
+
     return text, token_map
 
 
